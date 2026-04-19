@@ -15,35 +15,29 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
-# ---------- CUSTOM CSS (Polished Dark Theme) ----------
+# ---------- CUSTOM CSS (DeepSeek Inspired) ----------
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     * { font-family: 'Inter', sans-serif; }
-    
     .stApp { background-color: #0d1117; }
-    
     .main > div {
         max-width: 900px;
         margin: 0 auto;
         padding: 20px 20px 120px 20px;
     }
-    
     .stChatMessage { background: transparent !important; padding: 20px 0 !important; }
     [data-testid="stChatMessage"] { background: transparent !important; }
-    
     [data-testid="stChatMessage"][data-testid*="user"] {
         background: #1e242c !important;
         border-radius: 16px !important;
         padding: 16px 20px !important;
         margin: 16px 0 !important;
     }
-    
     [data-testid="stChatMessage"][data-testid*="assistant"] {
         background: transparent !important;
         padding: 16px 0 !important;
     }
-    
     .stChatInput {
         position: fixed !important;
         bottom: 20px !important;
@@ -58,7 +52,6 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(0,0,0,0.5) !important;
         z-index: 100 !important;
     }
-    
     .stChatInput textarea {
         background: transparent !important;
         border: none !important;
@@ -66,15 +59,12 @@ st.markdown("""
         font-size: 16px !important;
         padding: 12px 50px 12px 16px !important;
     }
-    
     .stChatInput textarea::placeholder { color: #7d8590 !important; }
-    
     [data-testid="stSidebar"] {
         background-color: #0d1117;
         border-right: 1px solid #1e242c;
     }
     [data-testid="stSidebar"] * { color: #e6edf3 !important; }
-    
     .stButton button {
         background: transparent;
         color: #e6edf3;
@@ -90,7 +80,6 @@ st.markdown("""
         border-color: #667eea;
         color: #667eea;
     }
-    
     code { background: #1e242c; padding: 2px 8px; border-radius: 6px; color: #e6edf3; }
     pre {
         background: #1e242c;
@@ -99,15 +88,12 @@ st.markdown("""
         padding: 20px;
         overflow-x: auto;
     }
-    
     h1, h2, h3, h4 { color: #e6edf3 !important; font-weight: 600 !important; }
     a { color: #667eea !important; text-decoration: none !important; }
     a:hover { text-decoration: underline !important; }
-    
     .welcome-container { text-align: center; padding: 60px 20px; }
     .welcome-title { font-size: 32px; font-weight: 600; color: #e6edf3; margin-bottom: 16px; }
     .welcome-subtitle { font-size: 18px; color: #7d8590; margin-bottom: 40px; }
-    
     .stFileUploader > div { width: 100%; }
     .stFileUploader button { border: 1px dashed #30363d !important; }
 </style>
@@ -127,9 +113,9 @@ MODELS = {
     "Qwen Coder 32B": "qwen-coder",
 }
 
-SYSTEM_PROMPT = """You are DenLab, a professional AI research assistant. You help with code analysis, debugging, technical writing, and research. Be concise, accurate, and helpful."""
+SYSTEM_PROMPT = """You are DenLab, a professional AI research assistant. Help with code analysis, debugging, technical writing, and research. Be concise, accurate, and helpful."""
 
-# ---------- SESSION STATE INIT ----------
+# ---------- SESSION STATE ----------
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -167,7 +153,7 @@ def chat_api(messages: List[Dict], model: str, retries: int = 2) -> str:
             if attempt < retries:
                 time.sleep(1)
                 continue
-            return "⚠️ Request timed out. The file may be too large. Try a smaller portion."
+            return "⚠️ Request timed out. Try a smaller file or shorter prompt."
         except requests.exceptions.RequestException as e:
             if attempt < retries:
                 time.sleep(1)
@@ -187,6 +173,7 @@ def analyze_file(content: str, filename: str, model: str) -> str:
     truncated = len(content) > max_chars
     display = content[:max_chars]
     
+    # Fixed f-string with escaped backticks
     prompt = f"""Analyze this file: {filename}
 File type: {ext}
 {f'⚠️ Truncated to {max_chars} chars' if truncated else ''}
@@ -297,7 +284,7 @@ for msg in st.session_state.messages:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- INPUT AREA ----------
+# ---------- INPUT AREA (with dynamic key to prevent loops) ----------
 col1, col2 = st.columns([8, 1])
 
 with col1:
