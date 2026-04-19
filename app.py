@@ -49,11 +49,6 @@ st.markdown("""
         margin: 16px 0 !important;
     }
     
-    [data-testid="stChatMessage"][data-testid*="assistant"] {
-        background: transparent !important;
-        padding: 16px 0 !important;
-    }
-    
     .stChatInput textarea {
         border: 1px solid #e0e0e0 !important;
         border-radius: 24px !important;
@@ -78,7 +73,6 @@ st.markdown("""
     .stButton button:hover {
         background: #f0f2f6;
         border-color: #667eea;
-        color: #667eea;
     }
     
     [data-testid="stSidebar"] {
@@ -90,46 +84,17 @@ st.markdown("""
         color: #000000 !important;
     }
     
-    code {
-        background: #f0f2f6;
-        padding: 2px 8px;
-        border-radius: 6px;
-        color: #000000;
-    }
-    
-    pre {
-        background: #f0f2f6;
-        border: 1px solid #e0e0e0;
-        border-radius: 12px;
-        padding: 20px;
-        overflow-x: auto;
-        color: #000000;
-    }
-    
     h1, h2, h3, h4, p, div, span, label {
         color: #000000 !important;
     }
     
-    .welcome-container {
-        text-align: center;
-        padding: 60px 20px;
-    }
-    
-    .welcome-title {
-        font-size: 32px;
-        font-weight: 600;
-        color: #000000;
-        margin-bottom: 16px;
-    }
-    
-    .welcome-subtitle {
-        font-size: 18px;
-        color: #666666;
-        margin-bottom: 40px;
-    }
-    
-    .stFileUploader div {
-        color: #000000 !important;
+    .file-attachment {
+        background: #f0f2f6;
+        border-radius: 12px;
+        padding: 8px 16px;
+        margin: 8px 0;
+        display: inline-block;
+        font-size: 14px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -147,17 +112,25 @@ MODELS = {
     "Gemini 2.0 Flash": "gemini",
 }
 
-SYSTEM_PROMPT = """You are DenLab, a professional AI assistant. Be helpful, concise, and accurate."""
+SYSTEM_PROMPT = """You are DenLab, a professional AI assistant. You can analyze files when asked.
+When the user uploads a file, they will tell you what they want you to do with it.
+Be helpful, concise, and accurate."""
 
 # ---------- SESSION STATE ----------
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "assistant", "content": "🧪 Hello! I'm DenLab. How can I help you today?"}
+        {"role": "assistant", "content": "🧪 Hello! I'm DenLab. Upload a file or ask me anything."}
     ]
 
 if "model" not in st.session_state:
     st.session_state.model = "openai"
+
+if "attached_file" not in st.session_state:
+    st.session_state.attached_file = None
+
+if "file_content" not in st.session_state:
+    st.session_state.file_content = None
 
 # ---------- API FUNCTION ----------
 def chat_api(messages: List[Dict], model: str) -> str:
@@ -176,20 +149,6 @@ def generate_image(prompt: str) -> str:
     encoded = requests.utils.quote(prompt)
     return f"{IMAGE_API}/{encoded}?width=1024&height=1024&nologo=true"
 
-def analyze_file_content(content: str, filename: str, model: str) -> str:
-    prompt = f"""Analyze this file: {filename}
-
-Content:
-{content[:4000]}
-
-Provide a brief summary of what this file does."""
-    
-    messages = [
-        {"role": "system", "content": "You are a technical analyst. Be concise."},
-        {"role": "user", "content": prompt}
-    ]
-    return chat_api(messages, model)
-
 # ---------- SIDEBAR ----------
 with st.sidebar:
     st.title("🧪 DenLab")
@@ -203,29 +162,27 @@ with st.sidebar:
     if st.button("🔄 New Chat", use_container_width=True):
         st.session_state.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "🧪 Hello! I'm DenLab. How can I help you today?"}
+            {"role": "assistant", "content": "🧪 Hello! I'm DenLab. Upload a file or ask me anything."}
         ]
+        st.session_state.attached_file = None
+        st.session_state.file_content = None
         st.rerun()
     
-    if st.button("🗑️ Clear", use_container_width=True):
-        st.session_state.messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
-        st.rerun()
+    # Show attached file
+    if st.session_state.attached_file:
+        st.divider()
+        st.subheader("📎 Attached")
+        st.info(f"**{st.session_state.attached_file}**\n\nReady for analysis. Ask me about it.")
+        if st.button("❌ Clear Attachment", use_container_width=True):
+            st.session_state.attached_file = None
+            st.session_state.file_content = None
+            st.rerun()
     
     st.divider()
     st.caption("v1.0")
 
 # ---------- MAIN CHAT ----------
 st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-
-if len(st.session_state.messages) <= 2:
-    st.markdown("""
-    <div class="welcome-container">
-        <div class="welcome-title">🧪 DenLab</div>
-        <div class="welcome-subtitle">AI Research Assistant</div>
-    </div>
-    """, unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
     if msg["role"] == "system":
@@ -244,40 +201,38 @@ with col1:
 with col2:
     uploaded_file = st.file_uploader(
         "📎",
-        type=["txt", "py", "js", "html", "css", "json", "md", "csv", "php", "java", "c", "cpp", "png", "jpg", "jpeg"],
-        label_visibility="collapsed"
+        type=["txt", "py", "js", "html", "css", "json", "md", "csv", "php", "java", "c", "cpp", "png", "jpg", "jpeg", "pdf"],
+        label_visibility="collapsed",
+        key="file_uploader"
     )
 
-# ---------- HANDLE UPLOAD ----------
+# ---------- HANDLE UPLOAD (Silent - No Auto Analysis) ----------
 if uploaded_file:
-    file_bytes = uploaded_file.read()
-    filename = uploaded_file.name
-    
     try:
-        content = file_bytes.decode('utf-8', errors='ignore')
+        content = uploaded_file.read().decode('utf-8', errors='ignore')
     except:
-        content = "[Binary file - preview not available]"
+        content = "[Binary file - content stored]"
     
+    st.session_state.attached_file = uploaded_file.name
+    st.session_state.file_content = content
+    
+    # Add subtle system message
     st.session_state.messages.append({
-        "role": "user",
-        "content": f"📎 Uploaded: {filename}"
+        "role": "system",
+        "content": f"[FILE_ATTACHED] {uploaded_file.name}"
     })
     
-    with st.chat_message("user"):
-        st.markdown(f"📎 **Uploaded**: `{filename}`")
-        with st.expander("Preview"):
-            st.code(content[:2000], language=Path(filename).suffix[1:] or "text")
-    
-    with st.chat_message("assistant"):
-        with st.spinner(f"Analyzing {filename}..."):
-            analysis = analyze_file_content(content, filename, st.session_state.model)
-        st.markdown(analysis)
-    
-    st.session_state.messages.append({"role": "assistant", "content": analysis})
     st.rerun()
 
 # ---------- HANDLE CHAT ----------
 if prompt:
+    # Check if there's an attached file to include
+    file_context = ""
+    if st.session_state.file_content and st.session_state.attached_file:
+        file_context = f"\n\n[Attached file: {st.session_state.attached_file}]\nContent preview:\n{st.session_state.file_content[:3000]}"
+    
+    full_prompt = prompt + file_context
+    
     if prompt.lower().startswith("/imagine"):
         image_desc = prompt[8:].strip()
         if image_desc:
@@ -301,6 +256,11 @@ if prompt:
             with st.spinner("Thinking..."):
                 api_messages = [m for m in st.session_state.messages if m["role"] != "system"]
                 api_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+                
+                # Add file context to the last user message
+                if file_context:
+                    api_messages[-1]["content"] = full_prompt
+                
                 response = chat_api(api_messages, st.session_state.model)
             st.markdown(response)
         
