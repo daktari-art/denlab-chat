@@ -1,255 +1,276 @@
 import streamlit as st
 import requests
-import json
-import base64
+from typing import List, Dict
 import time
-from typing import List, Dict, Optional
-import os
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
-    page_title="DenLab Chat",
+    page_title="DenLab",
     page_icon="🧪",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# ---------- CUSTOM CSS (DeepSeek Style) ----------
+# ---------- CLEAN CUSTOM CSS ----------
 st.markdown("""
 <style>
+    /* Clean light theme */
     .stApp {
-        background-color: #0f1117;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     }
+    
+    /* Chat container */
+    .main-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    /* Chat messages */
     .stChatMessage {
-        background-color: transparent !important;
+        background: white !important;
+        border-radius: 20px !important;
+        padding: 16px 20px !important;
+        margin: 12px 0 !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
     }
+    
     [data-testid="stChatMessage"] {
-        background-color: #1a1d24;
-        border-radius: 12px;
-        padding: 16px;
-        margin: 8px 0;
+        background: white !important;
     }
+    
+    /* User message specific */
+    [data-testid="stChatMessage"][data-testid*="user"] {
+        background: linear-gradient(135deg, #667eea, #764ba2) !important;
+        color: white !important;
+    }
+    
+    /* Chat input */
+    .stChatInput {
+        background: white !important;
+        border-radius: 30px !important;
+        padding: 12px 20px !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15) !important;
+    }
+    
     .stChatInput textarea {
-        background-color: #1a1d24;
-        border: 1px solid #2d3340;
-        border-radius: 12px;
-        color: #e8edf5;
+        background: transparent !important;
+        border: none !important;
+        color: #333 !important;
+        font-size: 16px !important;
     }
+    
+    .stChatInput textarea::placeholder {
+        color: #999 !important;
+    }
+    
+    /* Buttons */
     .stButton button {
-        background-color: #2d3340;
-        color: #e8edf5;
-        border: none;
-        border-radius: 8px;
+        background: white !important;
+        color: #667eea !important;
+        border: 2px solid #667eea !important;
+        border-radius: 30px !important;
+        padding: 8px 20px !important;
+        font-weight: 600 !important;
+        transition: all 0.3s !important;
     }
+    
     .stButton button:hover {
-        background-color: #3d4455;
+        background: #667eea !important;
+        color: white !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 5px 15px rgba(102,126,234,0.3) !important;
     }
-    h1, h2, h3, h4, h5, h6, p, span, div {
-        color: #e8edf5;
+    
+    /* File uploader */
+    .stFileUploader {
+        background: white !important;
+        border-radius: 20px !important;
+        padding: 20px !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
     }
-    [data-testid="stSidebar"] {
-        background-color: #0f1117;
-        border-right: 1px solid #2d3340;
+    
+    /* Headers */
+    h1, h2, h3 {
+        color: white !important;
+        text-shadow: 0 2px 10px rgba(0,0,0,0.2) !important;
     }
-    [data-testid="stSidebar"] * {
-        color: #e8edf5 !important;
+    
+    /* Action bar */
+    .action-bar {
+        display: flex;
+        gap: 10px;
+        padding: 15px 0;
+        flex-wrap: wrap;
+    }
+    
+    /* Model selector */
+    .stSelectbox {
+        background: white !important;
+        border-radius: 30px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- API CONFIG (Backend - Hidden) ----------
-TEXT_API = "https://text.pollinations.ai/openai"
+# ---------- API CONFIG ----------
+API_URL = "https://text.pollinations.ai/openai"
 IMAGE_API = "https://image.pollinations.ai/prompt"
 HEADERS = {"Content-Type": "application/json"}
 
 MODELS = {
-    "GPT-4o-mini (Fast)": "openai",
-    "GPT-4o (Large)": "openai-large",
-    "Llama 3.3 70B": "llama",
-    "DeepSeek-V3": "deepseek",
-    "Gemini 2.0 Flash": "gemini",
-    "Qwen Coder 32B": "qwen-coder",
-    "Claude 3.5 Haiku": "claude-haiku",
+    "🧠 GPT-4o-mini": "openai",
+    "🚀 GPT-4o": "openai-large",
+    "🦙 Llama 3.3 70B": "llama",
+    "🔍 DeepSeek-V3": "deepseek",
+    "💎 Gemini 2.0": "gemini",
+    "💻 Qwen Coder": "qwen-coder",
 }
 
-DEFAULT_SYSTEM = """You are DenLab Assistant, a professional AI research and development assistant. 
-You specialize in code debugging, technical explanations, file analysis, and research assistance.
-Be concise, accurate, and helpful. Use a professional but friendly tone."""
+SYSTEM_PROMPT = """You are DenLab Assistant, an AI research companion. 
+You help with coding, debugging, file analysis, and technical questions.
+Be professional, concise, and helpful. Use a friendly tone."""
 
 # ---------- SESSION STATE ----------
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "system", "content": DEFAULT_SYSTEM},
-        {"role": "assistant", "content": "🧪 DenLab Chat ready. How can I assist your research today?"}
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "assistant", "content": "👋 Welcome to DenLab! I'm your AI research assistant. How can I help you today?"}
     ]
 
-if "conversations" not in st.session_state:
-    st.session_state.conversations = {"Default": st.session_state.messages.copy()}
-
-if "current_conv" not in st.session_state:
-    st.session_state.current_conv = "Default"
-
-if "selected_model" not in st.session_state:
-    st.session_state.selected_model = "openai"
-
-if "generated_images" not in st.session_state:
-    st.session_state.generated_images = []
+if "model" not in st.session_state:
+    st.session_state.model = "openai"
 
 # ---------- API FUNCTIONS ----------
-def get_ai_response(messages: List[Dict], model: str) -> str:
-    payload = {"model": model, "messages": messages, "stream": False, "temperature": 0.7}
+def chat(messages: List[Dict], model: str) -> str:
     try:
-        response = requests.post(TEXT_API, headers=HEADERS, json=payload, timeout=90)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"❌ Error: {e}"
+        resp = requests.post(API_URL, headers=HEADERS, 
+                            json={"model": model, "messages": messages, "stream": False}, 
+                            timeout=60)
+        return resp.json()["choices"][0]["message"]["content"]
+    except:
+        return "⚠️ Connection error. Please try again."
 
-def generate_image(prompt: str, width: int = 1024, height: int = 1024) -> str:
+def generate_image(prompt: str) -> str:
     encoded = requests.utils.quote(prompt)
-    return f"{IMAGE_API}/{encoded}?width={width}&height={height}&nologo=true"
+    return f"{IMAGE_API}/{encoded}?width=1024&height=1024&nologo=true"
 
-def analyze_file_content(content: str, filename: str) -> str:
-    analysis_prompt = f"""Analyze this file: {filename}
-Content:
-{content[:3000]}
-
-Provide:
-1. File type and purpose
-2. Key insights or summary
-3. Any issues or suggestions
-"""
-    messages = [
-        {"role": "system", "content": "You are a file analysis expert. Be concise and technical."},
-        {"role": "user", "content": analysis_prompt}
-    ]
-    return get_ai_response(messages, st.session_state.selected_model)
-
-# ---------- SIDEBAR ----------
-with st.sidebar:
+# ---------- HEADER ----------
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
     st.title("🧪 DenLab")
     st.caption("AI Research Assistant")
-    
-    st.subheader("🤖 Model")
-    model_display = st.selectbox("Select AI Model", options=list(MODELS.keys()), label_visibility="collapsed")
-    st.session_state.selected_model = MODELS[model_display]
-    
-    if st.button("➕ New Session", use_container_width=True):
-        new_conv = f"Session {len(st.session_state.conversations) + 1}"
-        st.session_state.conversations[new_conv] = [
-            {"role": "system", "content": DEFAULT_SYSTEM},
-            {"role": "assistant", "content": "🧪 DenLab Chat ready. How can I assist your research today?"}
+
+# ---------- ACTION BAR ----------
+st.markdown("---")
+col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+
+with col1:
+    # Model selector
+    model_choice = st.selectbox("Model", list(MODELS.keys()), label_visibility="collapsed")
+    st.session_state.model = MODELS[model_choice]
+
+with col2:
+    # New chat button
+    if st.button("➕ New Chat", use_container_width=True):
+        st.session_state.messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "assistant", "content": "👋 Fresh session! What would you like to explore?"}
         ]
-        st.session_state.current_conv = new_conv
-        st.session_state.messages = st.session_state.conversations[new_conv].copy()
         st.rerun()
-    
-    st.divider()
-    
-    st.subheader("📎 File Analysis")
-    uploaded_file = st.file_uploader("Upload for analysis", type=["txt", "py", "js", "html", "css", "json", "md"], label_visibility="collapsed")
-    if uploaded_file:
-        try:
-            content = uploaded_file.read().decode('utf-8', errors='ignore')
-            analysis = analyze_file_content(content, uploaded_file.name)
-            st.session_state.messages.append({"role": "user", "content": f"[Uploaded: {uploaded_file.name}]"})
-            st.session_state.messages.append({"role": "assistant", "content": analysis})
-            st.rerun()
-        except Exception as e:
-            st.error(f"Could not read file: {e}")
-    
-    st.divider()
-    
-    st.subheader("🎨 Image Generation")
-    image_prompt = st.text_area("Image prompt", placeholder="Describe the image...", label_visibility="collapsed")
-    img_col1, img_col2 = st.columns(2)
-    with img_col1:
-        width = st.selectbox("Width", [512, 768, 1024], index=2)
-    with img_col2:
-        height = st.selectbox("Height", [512, 768, 1024], index=2)
-    
-    if st.button("🎨 Generate", use_container_width=True):
-        if image_prompt:
-            with st.spinner("Generating..."):
-                img_url = generate_image(image_prompt, width, height)
-                st.session_state.generated_images.append({"prompt": image_prompt, "url": img_url})
-                st.session_state.messages.append({"role": "user", "content": f"🎨 /imagine {image_prompt}"})
-                st.session_state.messages.append({"role": "assistant", "content": f"![Generated]({img_url})"})
-                st.rerun()
-        else:
-            st.warning("Enter a prompt")
-    
-    if st.session_state.generated_images:
-        st.caption("Recent:")
-        for img in st.session_state.generated_images[-2:]:
-            st.image(img["url"], caption=img["prompt"][:40] + "...", use_container_width=True)
-    
-    st.divider()
-    
-    st.subheader("📚 Sessions")
-    for conv_name in st.session_state.conversations:
-        if st.button(conv_name, use_container_width=True):
-            st.session_state.current_conv = conv_name
-            st.session_state.messages = st.session_state.conversations[conv_name].copy()
-            st.rerun()
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("💾 Export", use_container_width=True):
-            chat_text = "\n\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages if m['role'] != 'system'])
-            st.download_button("Download", chat_text, "denlab_chat.txt", use_container_width=True)
-    with col2:
-        if st.button("🗑️ Clear", use_container_width=True):
-            st.session_state.conversations = {"Default": [
-                {"role": "system", "content": DEFAULT_SYSTEM},
-                {"role": "assistant", "content": "🧪 DenLab Chat ready. How can I assist your research today?"}
-            ]}
-            st.session_state.current_conv = "Default"
-            st.session_state.messages = st.session_state.conversations["Default"].copy()
-            st.rerun()
 
-# ---------- MAIN CHAT ----------
-st.title("🧪 DenLab Chat")
-st.caption("AI Research & Development Assistant")
+with col3:
+    # Clear chat
+    if st.button("🗑️ Clear", use_container_width=True):
+        st.session_state.messages = [st.session_state.messages[0]]
+        st.rerun()
 
+with col4:
+    # Export chat
+    chat_text = "\n\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages if m['role'] != 'system'])
+    st.download_button("💾 Export", chat_text, "denlab_chat.txt", use_container_width=True)
+
+st.markdown("---")
+
+# ---------- MAIN CHAT AREA ----------
 for msg in st.session_state.messages:
-    if msg["role"] == "system":
-        continue
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    if msg["role"] != "system":
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-if prompt := st.chat_input("Message DenLab Assistant..."):
+# ---------- CHAT INPUT ----------
+prompt = st.chat_input("Message DenLab...")
+
+if prompt:
+    # Check for image command
     if prompt.lower().startswith("/imagine"):
-        image_desc = prompt[8:].strip()
-        if image_desc:
+        image_prompt = prompt[8:].strip()
+        if image_prompt:
+            st.session_state.messages.append({"role": "user", "content": f"🎨 {prompt}"})
             with st.chat_message("user"):
-                st.markdown(prompt)
-            st.session_state.messages.append({"role": "user", "content": prompt})
+                st.markdown(f"🎨 {prompt}")
+            
             with st.chat_message("assistant"):
-                with st.spinner("🎨 Generating..."):
-                    img_url = generate_image(image_desc)
-                    st.markdown(f"![Generated]({img_url})")
-                    st.session_state.generated_images.append({"prompt": image_desc, "url": img_url})
-                    response = f"Generated: {img_url}"
+                with st.spinner("🎨 Creating image..."):
+                    img_url = generate_image(image_prompt)
+                    st.image(img_url, caption=image_prompt, use_container_width=True)
+                    response = f"✨ Here's your image: {image_prompt}"
+            
             st.session_state.messages.append({"role": "assistant", "content": response})
-        else:
-            st.warning("Provide an image description after /imagine")
+    
+    # File upload detection (user can paste file content)
+    elif prompt.startswith("[FILE]"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown("📎 File uploaded for analysis")
+        
+        with st.chat_message("assistant"):
+            with st.spinner("📄 Analyzing file..."):
+                analysis = chat([
+                    {"role": "system", "content": "Analyze this file content. Provide summary and key insights."},
+                    {"role": "user", "content": prompt}
+                ], st.session_state.model)
+            st.markdown(analysis)
+        
+        st.session_state.messages.append({"role": "assistant", "content": analysis})
+    
+    # Normal chat
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
+        
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                api_messages = [m for m in st.session_state.messages if m["role"] != "system"]
-                api_messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM})
-                response = get_ai_response(api_messages, st.session_state.selected_model)
+            with st.spinner("💭 Thinking..."):
+                response = chat([m for m in st.session_state.messages if m["role"] != "system"], st.session_state.model)
             st.markdown(response)
+        
         st.session_state.messages.append({"role": "assistant", "content": response})
     
-    st.session_state.conversations[st.session_state.current_conv] = st.session_state.messages.copy()
     st.rerun()
 
-st.divider()
-st.caption("🧪 DenLab · AI Research Assistant")
+# ---------- SIDEBAR (Additional Tools) ----------
+with st.sidebar:
+    st.header("🛠️ Tools")
+    
+    # Image Generation
+    with st.expander("🎨 Image Generator", expanded=False):
+        img_prompt = st.text_input("Description", placeholder="A futuristic city...")
+        if st.button("Generate Image", use_container_width=True):
+            if img_prompt:
+                with st.spinner("Creating..."):
+                    st.image(generate_image(img_prompt), caption=img_prompt, use_container_width=True)
+    
+    # File Upload
+    with st.expander("📎 File Analysis", expanded=False):
+        uploaded = st.file_uploader("Upload file", type=["txt", "py", "js", "json", "md", "csv"])
+        if uploaded:
+            content = uploaded.read().decode('utf-8', errors='ignore')
+            if st.button("Analyze File", use_container_width=True):
+                analysis = chat([
+                    {"role": "system", "content": "Analyze this file. Be concise."},
+                    {"role": "user", "content": f"File: {uploaded.name}\n\n{content[:2000]}"}
+                ], st.session_state.model)
+                st.markdown(analysis)
+    
+    st.divider()
+    st.caption("🧪 DenLab v1.0")
