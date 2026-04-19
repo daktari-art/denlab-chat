@@ -7,34 +7,36 @@ from pathlib import Path
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="DenLab", page_icon="🧪", layout="wide")
 
-# ---------- LIGHT THEME CSS ----------
+# ---------- LIGHT THEME CSS (Smaller text, refined) ----------
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
     * { font-family: 'Inter', sans-serif; }
     
     .stApp { background-color: #ffffff; }
     
     .main > div {
-        max-width: 900px;
+        max-width: 800px;
         margin: 0 auto;
         padding: 20px 20px 120px 20px;
     }
     
-    .stChatMessage { background: transparent !important; padding: 20px 0 !important; }
+    .stChatMessage { background: transparent !important; padding: 16px 0 !important; }
     
     [data-testid="stChatMessage"][data-testid*="user"] {
         background: #f0f2f6 !important;
-        border-radius: 16px !important;
-        padding: 16px 20px !important;
-        margin: 16px 0 !important;
+        border-radius: 14px !important;
+        padding: 14px 18px !important;
+        margin: 12px 0 !important;
         color: #000000 !important;
+        font-size: 15px !important;
     }
     
     [data-testid="stChatMessage"][data-testid*="assistant"] {
         background: transparent !important;
-        padding: 16px 0 !important;
+        padding: 14px 0 !important;
         color: #000000 !important;
+        font-size: 15px !important;
     }
     
     .stChatInput {
@@ -43,12 +45,12 @@ st.markdown("""
         left: 50% !important;
         transform: translateX(-50%) !important;
         width: calc(100% - 40px) !important;
-        max-width: 860px !important;
+        max-width: 780px !important;
         background: #ffffff !important;
         border: 1px solid #e0e0e0 !important;
-        border-radius: 30px !important;
-        padding: 8px 16px !important;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.1) !important;
+        border-radius: 24px !important;
+        padding: 6px 14px !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
         z-index: 100 !important;
     }
     
@@ -56,25 +58,23 @@ st.markdown("""
         background: transparent !important;
         border: none !important;
         color: #000000 !important;
-        font-size: 16px !important;
-        padding: 12px 50px 12px 16px !important;
+        font-size: 15px !important;
+        padding: 10px 45px 10px 14px !important;
     }
-    
-    .stChatInput textarea::placeholder { color: #888888 !important; }
     
     [data-testid="stSidebar"] {
         background-color: #fafafa;
         border-right: 1px solid #e0e0e0;
     }
     
-    [data-testid="stSidebar"] * { color: #000000 !important; }
+    [data-testid="stSidebar"] * { color: #000000 !important; font-size: 14px !important; }
     
     .stButton button {
         background: #ffffff;
         color: #000000;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
-        padding: 8px 16px;
+        padding: 8px 14px;
         font-size: 14px;
         font-weight: 500;
     }
@@ -82,20 +82,18 @@ st.markdown("""
     .stButton button:hover {
         background: #f0f2f6;
         border-color: #667eea;
-        color: #667eea;
     }
     
+    h1 { font-size: 28px !important; }
+    h2 { font-size: 22px !important; }
+    h3 { font-size: 18px !important; }
     h1, h2, h3, h4, p, span, div { color: #000000 !important; }
-    
-    .welcome-container { text-align: center; padding: 60px 20px; }
-    .welcome-title { font-size: 32px; font-weight: 600; color: #000000; margin-bottom: 16px; }
-    .welcome-subtitle { font-size: 18px; color: #666666; margin-bottom: 40px; }
     
     .image-container {
         background: #f8f9fa;
-        border-radius: 16px;
-        padding: 20px;
-        margin: 16px 0;
+        border-radius: 14px;
+        padding: 16px;
+        margin: 14px 0;
         text-align: center;
     }
 </style>
@@ -105,7 +103,7 @@ st.markdown("""
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "assistant", "content": "🧪 Hello! I'm DenLab. I can chat, analyze files, and generate images.\n\n**Try:**\n- `/imagine sunset over mountains` to create images\n- Upload files for analysis\n- Ask me anything!"}
+        {"role": "assistant", "content": "🧪 **DenLab ready.**\n\n• `/imagine [description]` – Generate images\n• Upload files – Analyze code\n• Ask me anything"}
     ]
 
 if "model" not in st.session_state:
@@ -135,7 +133,7 @@ with st.sidebar:
     if st.button("🔄 New Chat", use_container_width=True):
         st.session_state.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "🧪 Hello! I'm DenLab. How can I help you today?"}
+            {"role": "assistant", "content": "🧪 **DenLab ready.** How can I help?"}
         ]
         st.rerun()
     
@@ -143,12 +141,12 @@ with st.sidebar:
     st.subheader("📎 File Upload")
     
     uploaded_file = st.file_uploader(
-        "Upload file for analysis",
+        "Upload for analysis",
         type=["txt", "py", "js", "html", "css", "json", "md", "csv", "php", "java", "c", "cpp"],
         key=f"uploader_{st.session_state.uploader_key}"
     )
     
-    st.caption("v2.0 · Light Theme")
+    st.caption("v2.1 · Light")
 
 # ---------- HANDLE FILE UPLOAD ----------
 if uploaded_file and not st.session_state.processing_upload:
@@ -166,17 +164,17 @@ if st.session_state.pending_upload and st.session_state.processing_upload:
     except:
         content = "[Could not read file]"
     
-    st.session_state.messages.append({"role": "user", "content": f"📎 Uploaded: {filename}"})
+    st.session_state.messages.append({"role": "user", "content": f"📎 {filename}"})
     
     with st.chat_message("user"):
-        st.markdown(f"📎 **Uploaded**: `{filename}`")
+        st.markdown(f"📎 **{filename}**")
         if content != "[Could not read file]":
             with st.expander("Preview"):
                 ext = Path(filename).suffix[1:] if Path(filename).suffix else "text"
-                st.code(content[:2000], language=ext)
+                st.code(content[:1500], language=ext)
     
     with st.chat_message("assistant"):
-        with st.spinner(f"Analyzing {filename}..."):
+        with st.spinner(f"Analyzing..."):
             analysis = analyze_file(content, filename, st.session_state.model)
         st.markdown(analysis)
     
@@ -215,7 +213,7 @@ if prompt := st.chat_input("Message DenLab... (/imagine for images)"):
                 st.markdown(f"🎨 {prompt}")
             
             with st.chat_message("assistant"):
-                with st.spinner("🎨 Creating image..."):
+                with st.spinner("Creating image..."):
                     img_url = generate_image(image_desc)
                     st.markdown('<div class="image-container">', unsafe_allow_html=True)
                     st.image(img_url, caption=image_desc, use_container_width=True)
