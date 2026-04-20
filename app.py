@@ -1,4 +1,4 @@
-kk"""DenLab v3.0 - Autonomous AI Research Assistant
+"""DenLab v3.0 - Autonomous AI Research Assistant
 GitHub: https://github.com/daktari-art/denlab-chat
 Streamlit: https://denlab-chat.streamlit.app
 """
