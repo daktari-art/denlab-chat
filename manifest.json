@@ -1,0 +1,51 @@
+{
+  "name": "DenLab - AI Research Assistant",
+  "short_name": "DenLab",
+  "description": "Beyond Conversational AI - Agentic execution with tool-use loop",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='24' fill='%230d0d0d'/%3E%3Ctext x='96' y='120' font-size='100' text-anchor='middle' fill='%234a9eff'%3E%F0%9F%A7%AA%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='48' fill='%230d0d0d'/%3E%3Ctext x='256' y='320' font-size='280' text-anchor='middle' fill='%234a9eff'%3E%F0%9F%A7%AA%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "developer", "utilities"],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1280 720'%3E%3Crect width='1280' height='720' fill='%230d0d0d'/%3E%3C/svg%3E",
+      "sizes": "1280x720",
+      "type": "image/svg+xml",
+      "form_factor": "wide"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Chat",
+      "short_name": "Chat",
+      "description": "Start a new conversation",
+      "url": "/?action=new_chat",
+      "icons": [{"src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='12' fill='%23238636'/%3E%3Ctext x='48' y='64' font-size='48' text-anchor='middle'%3E%F0%9F%92%AC%3C/text%3E%3C/svg%3E", "sizes": "96x96"}]
+    },
+    {
+      "name": "Agent Mode",
+      "short_name": "Agent",
+      "description": "Launch agent mode",
+      "url": "/?mode=agent",
+      "icons": [{"src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='12' fill='%231a3a5c'/%3E%3Ctext x='48' y='64' font-size='48' text-anchor='middle'%3E%F0%9F%A4%96%3C/text%3E%3C/svg%3E", "sizes": "96x96"}]
+    }
+  ]
+}
