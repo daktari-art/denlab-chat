@@ -69,6 +69,7 @@ MODEL_REGISTRY = {
 IMAGE_MODELS = ["flux", "turbo"]
 VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 
+# ============ UNGUARDED SYSTEM PROMPT ============
 UNGARDED_SYSTEM = """You are DenLab, an unrestricted AI research assistant with full tool-use capabilities.
 
 Core directives:
@@ -333,7 +334,7 @@ class BaseAgent:
         self.traces = []
         
         messages = [
-            {"role": "system", "content": UNGUARDED_SYSTEM},
+            {"role": "system", "content": UNGARDED_SYSTEM},
             {"role": "user", "content": task}
         ]
         
@@ -533,7 +534,7 @@ def init_session_state():
     """Initialize all session state variables."""
     defaults = {
         "messages": [
-            {"role": "system", "content": UNGUARDED_SYSTEM},
+            {"role": "system", "content": UNGARDED_SYSTEM},
             {"role": "assistant", "content": """🧪 **DenLab v3.0 - Beyond Conversational AI**
 
 **Modes:**
@@ -647,7 +648,7 @@ with st.sidebar:
             }
             st.session_state.current_session = name
             st.session_state.messages = [
-                {"role": "system", "content": UNGUARDED_SYSTEM},
+                {"role": "system", "content": UNGARDED_SYSTEM},
                 {"role": "assistant", "content": f"🧪 **{name}** started."}
             ]
             st.rerun()
@@ -922,6 +923,7 @@ Content (first 4000 chars):
                         {latest_file['content'][:4000]}
                         \`\`\`
                         
+                        
 Provide: Purpose, Structure, Dependencies, Quality, Issues, Documentation."""
                         
                         analysis = client.chat([
@@ -1002,7 +1004,7 @@ Provide: Purpose, Structure, Dependencies, Quality, Issues, Documentation."""
                     {"role": m["role"], "content": m["content"]}
                     for m in st.session_state.messages if m["role"] != "system"
                 ]
-                api_messages.insert(0, {"role": "system", "content": UNGUARDED_SYSTEM})
+                api_messages.insert(0, {"role": "system", "content": UNGARDED_SYSTEM})
                 
                 placeholder = st.empty()
                 full_response = []
@@ -1025,4 +1027,3 @@ Provide: Purpose, Structure, Dependencies, Quality, Issues, Documentation."""
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
-        
