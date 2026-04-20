@@ -1,11 +1,14 @@
-"""DenLab v3.0 - Autonomous AI Research Assistant
+kk"""DenLab v3.0 - Autonomous AI Research Assistant
 GitHub: https://github.com/daktari-art/denlab-chat
 Streamlit: https://denlab-chat.streamlit.app
 """
 import streamlit as st
 import asyncio
 import json
+import base64
+import io
 from datetime import datetime
+from pathlib import Path
 
 # Page config MUST be first
 st.set_page_config(
@@ -20,27 +23,21 @@ from assets.custom_css import DARK_THEME
 st.markdown(DARK_THEME, unsafe_allow_html=True)
 
 # Import components
-from components.sidebar import Sidebar
-from components.chat_interface import ChatInterface
-from components.agent_interface import AgentInterface
-
-# Import agents
-from agents.base_agent import BaseAgent, AgentState
-from agents.orchestrator import SwarmOrchestrator
-from agents.tool_registry import registry
-from agents.planner import TaskPlanner
-
-# Import tools (registers them automatically)
-from agents.tools import (
-    web_search, deep_research, execute_code,
-    fetch_url, read_file, write_file, analyze_image
-)
-
-# Import core
 from core.api_client import PollinationsClient
 from core.session_manager import SessionManager
 from config.settings import MODELS, SYSTEM_PROMPT
 from config.models import MessageRole, ContentType
+
+# Import agents
+from agents.base_agent import BaseAgent, AgentState
+from agents.orchestrator import SwarmOrchestrator
+from agents.planner import TaskPlanner
+
+# Import tools
+from agents.tools import (
+    web_search, deep_research, execute_code,
+    fetch_url, read_file, write_file, analyze_image
+)
 
 # ============ AGENT SETUP ============
 
@@ -88,7 +85,7 @@ class DenLabAgent(BaseAgent):
             }
         )
     
-    async def _llm_call(self, messages: List[Dict], tools: Optional[List[Dict]] = None) -> Dict:
+    async def _llm_call(self, messages, tools=None):
         """Call Pollinations API."""
         return self.client.chat(
             messages=messages,
@@ -97,7 +94,7 @@ class DenLabAgent(BaseAgent):
             temperature=0.7
         )
 
-def get_agent(model: str = "openai") -> DenLabAgent:
+def get_agent(model="openai"):
     """Get or create agent."""
     if "agent" not in st.session_state:
         st.session_state.agent = DenLabAgent(model=model)
@@ -121,7 +118,8 @@ def init_session_state():
         "processing_upload": False,
         "current_session": "Main",
         "sessions": {},
-        "agent_traces": []
+        "agent_traces": [],
+        "uploaded_files": {}  # Store file contents persistently
     }
     
     for key, value in defaults.items():
@@ -157,7 +155,7 @@ with st.sidebar:
                               help="Parallel agent execution")
         st.session_state.swarm_mode = swarm_mode
         
-        st.caption("Tools available: web_search, code_execution, file_ops, browser")
+        st.caption("Tools: web_search, code_execution, file_ops, browser")
     
     # Session Management
     st.divider()
@@ -221,54 +219,77 @@ if uploaded and not st.session_state.processing_upload:
 if st.session_state.pending_upload and st.session_state.processing_upload:
     file_obj = st.session_state.pending_upload
     filename = file_obj.name
+    file_key = f"{datetime.now().strftime('%H%M%S')}_{filename}"
     
-    if file_obj.type and file_obj.type.startswith("image/"):
+    # CRITICAL FIX: Read and STORE file content in session state
+    try:
         file_bytes = file_obj.read()
-        st.session_state.messages.append({
-            "role": "user", 
-            "content": f"🖼️ Uploaded: {filename}",
-            "metadata": {"type": "image_upload"}
-        })
         
-        with st.chat_message("user"):
-            st.markdown(f"🖼️ **{filename}**")
-            st.image(file_bytes, use_container_width=True)
-        
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing image..."):
-                # Use vision if available, otherwise acknowledge
-                response = f"I've received **{filename}**. In agent mode, I can analyze this image in detail. What would you like to know about it?"
-            st.markdown(response)
-    else:
-        try:
-            content = file_obj.read().decode('utf-8', errors='ignore')
-        except:
-            content = "[Could not read file]"
-        
-        st.session_state.messages.append({
-            "role": "user",
-            "content": f"📎 {filename}",
-            "metadata": {"type": "file", "filename": filename, "content": content[:2000]}
-        })
-        
-        with st.chat_message("user"):
-            st.markdown(f"📎 **{filename}**")
-            if content != "[Could not read file]":
+        if file_obj.type and file_obj.type.startswith("image/"):
+            # Store image
+            st.session_state.uploaded_files[file_key] = {
+                "type": "image",
+                "name": filename,
+                "bytes": file_bytes,
+                "mime": file_obj.type
+            }
+            
+            st.session_state.messages.append({
+                "role": "user", 
+                "content": f"🖼️ Uploaded: {filename}",
+                "metadata": {"type": "image_upload", "file_key": file_key}
+            })
+            
+            with st.chat_message("user"):
+                st.markdown(f"🖼️ **{filename}**")
+                st.image(file_bytes, use_container_width=True)
+            
+            with st.chat_message("assistant"):
+                response = f"I've received **{filename}** and stored it in memory. You can ask me to analyze it or use it in agent tasks."
+                st.markdown(response)
+        else:
+            # Store text content
+            try:
+                text_content = file_bytes.decode('utf-8', errors='ignore')
+            except:
+                text_content = "[Could not decode file]"
+            
+            st.session_state.uploaded_files[file_key] = {
+                "type": "text",
+                "name": filename,
+                "content": text_content,
+                "size": len(text_content)
+            }
+            
+            st.session_state.messages.append({
+                "role": "user",
+                "content": f"📎 {filename}",
+                "metadata": {"type": "file", "file_key": file_key, "content_preview": text_content[:500]}
+            })
+            
+            with st.chat_message("user"):
+                st.markdown(f"📎 **{filename}**")
                 with st.expander("Preview"):
-                    st.code(content[:1500], language=filename.split('.')[-1] if '.' in filename else 'text')
+                    st.code(text_content[:1500], language=filename.split('.')[-1] if '.' in filename else 'text')
+                
+                # ADD DOWNLOAD BUTTON FOR UPLOADED FILE
+                st.download_button(
+                    "⬇️ Download original",
+                    data=file_bytes,
+                    file_name=filename,
+                    mime=file_obj.type or "text/plain",
+                    key=f"dl_upload_{file_key}"
+                )
+            
+            with st.chat_message("assistant"):
+                response = f"📄 **{filename}** loaded and stored ({len(text_content)} chars). I can analyze it, search within it, or use it for code generation. The content is preserved for this session."
+                st.markdown(response)
         
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing..."):
-                if st.session_state.agent_mode:
-                    # Agent analyzes file
-                    agent = get_agent(st.session_state.model)
-                    agent.memory["uploaded_file"] = {"name": filename, "content": content}
-                    response = f"📄 **{filename}** loaded into agent memory. I can now reference this file in our conversation. Use `/analyze` for deep analysis."
-                else:
-                    response = f"Received **{filename}**. Ask me to analyze its contents."
-            st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
     
-    st.session_state.messages.append({"role": "assistant", "content": response})
     st.session_state.pending_upload = None
     st.session_state.processing_upload = False
     st.rerun()
@@ -283,46 +304,87 @@ for idx, msg in enumerate(st.session_state.messages):
     
     with st.chat_message(msg["role"]):
         # Handle different content types
-        if msg.get("metadata", {}).get("type") == "image":
+        metadata = msg.get("metadata", {})
+        
+        if metadata.get("type") == "image":
             st.image(msg["content"], use_container_width=True)
             st.caption("🎨 Generated image")
-        elif msg.get("metadata", {}).get("type") == "agent_trace":
-            # Render agent trace
+            
+            # ADD DOWNLOAD BUTTON FOR GENERATED IMAGE
+            try:
+                import requests
+                img_data = requests.get(msg["content"]).content
+                st.download_button(
+                    "⬇️ Download Image",
+                    data=img_data,
+                    file_name=f"denlab_generated_{idx}.png",
+                    mime="image/png",
+                    key=f"dl_img_{idx}"
+                )
+            except:
+                st.caption("[Download unavailable]")
+                
+        elif metadata.get("type") == "image_upload":
+            # Retrieve from stored files
+            file_key = metadata.get("file_key")
+            if file_key and file_key in st.session_state.uploaded_files:
+                file_data = st.session_state.uploaded_files[file_key]
+                st.image(file_data["bytes"], use_container_width=True)
+                st.caption(f"📎 {file_data['name']}")
+            else:
+                st.markdown(msg["content"])
+                
+        elif metadata.get("type") == "file":
+            st.markdown(msg["content"])
+            # Show stored content if available
+            file_key = metadata.get("file_key")
+            if file_key and file_key in st.session_state.uploaded_files:
+                file_data = st.session_state.uploaded_files[file_key]
+                with st.expander("📄 View stored content"):
+                    st.code(file_data["content"][:3000], language=file_data["name"].split('.')[-1] if '.' in file_data["name"] else 'text')
+                    
+        elif metadata.get("type") == "agent_trace":
+            st.markdown(msg["content"])
             with st.expander("🔍 Agent Execution Trace", expanded=False):
-                traces = msg["metadata"].get("traces", [])
+                traces = metadata.get("traces", [])
                 for trace in traces:
-                    st.markdown(f"**Step {trace.step}**")
-                    st.markdown(f"💭 *{trace.thought[:200]}...*" if trace.thought else "💭 *Thinking...*")
-                    for tc in trace.tool_calls:
-                        icon = "✅" if tc.status == "success" else "❌"
-                        st.markdown(f"{icon} **{tc.name}** ({tc.duration_ms:.0f}ms)")
-                        with st.code(language="json"):
-                            st.json({"args": tc.arguments, "result": str(tc.result)[:500]})
+                    st.markdown(f"**Step {trace.get('step', '?')}**")
+                    if trace.get("thought"):
+                        st.markdown(f"💭 *{trace['thought'][:200]}...*")
+                    for tc in trace.get("tool_calls", []):
+                        icon = "✅" if tc.get("status") == "success" else "❌"
+                        st.markdown(f"{icon} `{tc.get('name', 'unknown')}` ({tc.get('duration_ms', 0):.0f}ms)")
+                        with st.expander("Details"):
+                            st.json({"args": tc.get("arguments", {}), "result": str(tc.get("result", ""))[:500]})
+                            
+        elif metadata.get("type") == "code_execution":
+            st.markdown(msg["content"])
+            # Add download for code
+            code = metadata.get("code", "")
+            if code:
+                st.download_button(
+                    "⬇️ Download Code",
+                    data=code,
+                    file_name="generated_code.py",
+                    mime="text/x-python",
+                    key=f"dl_code_{idx}"
+                )
+                
         else:
             st.markdown(msg["content"])
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# ============ AGENT TRACE DISPLAY (if active) ============
-
-if st.session_state.agent_mode and st.session_state.get("current_agent_trace"):
-    st.divider()
-    with st.container():
-        st.subheader("🤖 Agent Activity")
-        trace_container = st.empty()
-        # Real-time updates handled in callback
-
 # ============ CHAT INPUT ============
 
 placeholder = "Message DenLab..." 
 if st.session_state.agent_mode:
-    placeholder = "🤖 Agent mode: Describe a complex task to autonomously execute..."
+    placeholder = "🤖 Agent mode: Describe a complex task..."
 
 if prompt := st.chat_input(placeholder):
     
-    # Handle commands
+    # Handle /imagine
     if prompt.lower().startswith("/imagine"):
-        # Image generation
         desc = prompt[8:].strip()
         if desc:
             st.session_state.messages.append({
@@ -339,6 +401,20 @@ if prompt := st.chat_input(placeholder):
                     client = PollinationsClient()
                     img_url = client.generate_image(desc)
                     st.image(img_url, caption=desc, use_container_width=True)
+                    
+                    # Download button
+                    try:
+                        import requests
+                        img_data = requests.get(img_url).content
+                        st.download_button(
+                            "⬇️ Download Image",
+                            data=img_data,
+                            file_name=f"denlab_{desc[:20].replace(' ', '_')}.png",
+                            mime="image/png"
+                        )
+                    except:
+                        pass
+                    
                     response = f"![Generated]({img_url})"
             
             st.session_state.messages.append({
@@ -348,8 +424,8 @@ if prompt := st.chat_input(placeholder):
             })
             st.rerun()
     
+    # Handle /research
     elif prompt.lower().startswith("/research"):
-        # Direct research command
         topic = prompt[9:].strip()
         if topic:
             st.session_state.messages.append({
@@ -370,6 +446,18 @@ if prompt := st.chat_input(placeholder):
                             st.markdown(f"**Source:** {finding['source']}")
                             st.markdown(finding['content'][:500] + "...")
                     
+                    # Download research
+                    research_md = f"# Research: {topic}\n\n"
+                    for f in data['findings']:
+                        research_md += f"## {f['title']}\n**Source:** {f['source']}\n\n{f['content']}\n\n---\n\n"
+                    
+                    st.download_button(
+                        "⬇️ Download Research",
+                        data=research_md,
+                        file_name=f"research_{topic.replace(' ', '_')}.md",
+                        mime="text/markdown"
+                    )
+                    
                     status.update(label="Research complete!", state="complete")
                     
                     synthesis = f"## Research: {topic}\n\nBased on {data['total_sources']} sources, here are the key findings:\n\n"
@@ -384,8 +472,8 @@ if prompt := st.chat_input(placeholder):
                     })
             st.rerun()
     
+    # Handle /code
     elif prompt.lower().startswith("/code"):
-        # Direct code execution
         task = prompt[5:].strip()
         if task:
             st.session_state.messages.append({
@@ -395,7 +483,6 @@ if prompt := st.chat_input(placeholder):
             
             with st.chat_message("assistant"):
                 with st.status("💻 Generating and executing code...", expanded=True):
-                    # Generate code via LLM
                     client = PollinationsClient()
                     code_prompt = f"Write Python code to: {task}\n\nReturn ONLY the code, no explanations."
                     code = client.chat([
@@ -403,12 +490,18 @@ if prompt := st.chat_input(placeholder):
                         {"role": "user", "content": code_prompt}
                     ], model=st.session_state.model)["content"]
                     
-                    # Clean code blocks
                     code = code.replace("```python", "").replace("```", "").strip()
                     
                     st.code(code, language="python")
                     
-                    # Execute
+                    # Download code
+                    st.download_button(
+                        "⬇️ Download Code",
+                        data=code,
+                        file_name="generated_code.py",
+                        mime="text/x-python"
+                    )
+                    
                     result = execute_code(code)
                     data = json.loads(result)
                     
@@ -428,8 +521,72 @@ if prompt := st.chat_input(placeholder):
                     })
             st.rerun()
     
+    # Handle file analysis command
+    elif prompt.lower().startswith("/analyze") or prompt.lower().startswith("analyse"):
+        # Look for uploaded files
+        if st.session_state.uploaded_files:
+            latest_file = list(st.session_state.uploaded_files.values())[-1]
+            
+            st.session_state.messages.append({
+                "role": "user",
+                "content": f"🔍 Analyze: {latest_file['name']}"
+            })
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing..."):
+                    if latest_file["type"] == "text":
+                        content = latest_file["content"]
+                        
+                        # Use LLM to analyze
+                        client = PollinationsClient()
+                        analysis_prompt = f"""Analyze this file: {latest_file['name']}
+
+Content (first 3000 chars):
+{content[:3000]}
+
+Provide:
+1. File purpose and type
+2. Key structures/functions
+3. Potential issues
+4. Improvement suggestions"""
+
+                        analysis = client.chat([
+                            {"role": "system", "content": "You are a code analysis expert."},
+                            {"role": "user", "content": analysis_prompt}
+                        ], model=st.session_state.model)["content"]
+                        
+                        st.markdown(analysis)
+                        
+                        # Download analysis
+                        st.download_button(
+                            "⬇️ Download Analysis",
+                            data=analysis,
+                            file_name=f"analysis_{latest_file['name']}.md",
+                            mime="text/markdown"
+                        )
+                        
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": analysis,
+                            "metadata": {"type": "file_analysis", "file": latest_file["name"]}
+                        })
+                    else:
+                        st.markdown("Image analysis requires vision capabilities. Describe what you see in the image.")
+        else:
+            st.session_state.messages.append({
+                "role": "user",
+                "content": prompt
+            })
+            with st.chat_message("assistant"):
+                st.markdown("No files uploaded yet. Please upload a file first using the sidebar.")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "No files uploaded yet. Please upload a file first using the sidebar."
+                })
+        st.rerun()
+    
+    # Agent Mode
     elif st.session_state.agent_mode:
-        # AGENT MODE - Autonomous execution
         st.session_state.messages.append({
             "role": "user",
             "content": prompt
@@ -440,68 +597,93 @@ if prompt := st.chat_input(placeholder):
         
         with st.chat_message("assistant"):
             if st.session_state.swarm_mode:
-                # SWARM MODE
+                # SWARM MODE - FIXED
                 with st.status("🐝 Initializing Agent Swarm...", expanded=True) as status:
-                    orchestrator = SwarmOrchestrator(max_parallel=3)
-                    
-                    # Register agent factories
-                    def make_researcher():
-                        a = DenLabAgent("Researcher", st.session_state.model)
-                        a.max_steps = 10
-                        return a
-                    
-                    def make_coder():
-                        a = DenLabAgent("Coder", st.session_state.model)
-                        a.max_steps = 8
-                        return a
-                    
-                    orchestrator.register_agent("researcher", make_researcher)
-                    orchestrator.register_agent("coder", make_coder)
-                    orchestrator.register_agent("analyst", make_researcher)
-                    orchestrator.register_agent("writer", make_researcher)
-                    
-                    # Progress callback
-                    def on_progress(subtask):
-                        status.write(f"🔄 {subtask.agent_type}: {subtask.description[:50]}...")
-                    
-                    orchestrator.on_progress = on_progress
-                    
-                    # Execute
-                    import asyncio
-                    result = asyncio.run(orchestrator.execute(prompt))
-                    
-                    status.update(label="✅ Swarm complete!", state="complete")
-                    
-                    # Display results
-                    st.markdown("## 🐝 Swarm Results")
-                    
-                    cols = st.columns(len(result["subtasks"]))
-                    for idx, (st_id, st_data) in enumerate(result["subtasks"].items()):
-                        with cols[idx % len(cols)]:
-                            icon = "✅" if st_data["status"] == "complete" else "❌"
-                            st.metric(f"{icon} {st_id}", 
-                                     f"{st_data['duration']:.1f}s",
-                                     st_data["status"])
-                    
-                    st.markdown("### Synthesis")
-                    st.markdown(result["synthesis"])
-                    
-                    # Store with traces
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": result["synthesis"],
-                        "metadata": {
-                            "type": "agent_trace",
-                            "traces": [],  # Simplified for swarm
-                            "subtasks": result["subtasks"]
-                        }
-                    })
+                    try:
+                        orchestrator = SwarmOrchestrator(max_parallel=3)
+                        
+                        # Create plan first
+                        planner = TaskPlanner()
+                        plan = planner.create_plan(prompt)
+                        
+                        # Register agent factories
+                        def make_researcher():
+                            a = DenLabAgent("Researcher", st.session_state.model)
+                            a.max_steps = 10
+                            return a
+                        
+                        def make_coder():
+                            a = DenLabAgent("Coder", st.session_state.model)
+                            a.max_steps = 8
+                            return a
+                        
+                        orchestrator.register_agent("researcher", make_researcher)
+                        orchestrator.register_agent("coder", make_coder)
+                        orchestrator.register_agent("analyst", make_researcher)
+                        orchestrator.register_agent("writer", make_researcher)
+                        
+                        # Progress callback
+                        def on_progress(subtask):
+                            status.write(f"🔄 {subtask.agent_type}: {subtask.description[:50]}...")
+                        
+                        orchestrator.on_progress = on_progress
+                        
+                        # Execute with proper error handling
+                        import asyncio
+                        result = asyncio.run(orchestrator.execute(prompt, plan))
+                        
+                        status.update(label="✅ Swarm complete!", state="complete")
+                        
+                        # Display results
+                        st.markdown("## 🐝 Swarm Results")
+                        
+                        if result.get("subtasks"):
+                            cols = st.columns(min(len(result["subtasks"]), 3))
+                            for idx, (st_id, st_data) in enumerate(result["subtasks"].items()):
+                                with cols[idx % 3]:
+                                    icon = "✅" if st_data.get("status") == "complete" else "❌"
+                                    duration = st_data.get("duration", 0)
+                                    st.metric(
+                                        label=f"{icon} {st_id}",
+                                        value=f"{duration:.1f}s" if duration else "Done",
+                                        delta=st_data.get("status", "unknown")
+                                    )
+                        
+                        st.markdown("### Synthesis")
+                        synthesis = result.get("synthesis", "No synthesis available.")
+                        st.markdown(synthesis)
+                        
+                        # Download full result
+                        full_result = json.dumps(result, indent=2, default=str)
+                        st.download_button(
+                            "⬇️ Download Full Result (JSON)",
+                            data=full_result,
+                            file_name="swarm_result.json",
+                            mime="application/json"
+                        )
+                        
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": synthesis,
+                            "metadata": {
+                                "type": "agent_trace",
+                                "traces": [],
+                                "subtasks": result.get("subtasks", {}),
+                                "full_result": result
+                            }
+                        })
+                        
+                    except Exception as e:
+                        st.error(f"Swarm error: {str(e)}")
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": f"Swarm execution failed: {str(e)}"
+                        })
             else:
                 # SINGLE AGENT MODE
                 agent = get_agent(st.session_state.model)
                 agent.model = st.session_state.model
                 
-                # Trace collection
                 traces = []
                 def on_step(trace):
                     traces.append(trace)
@@ -509,68 +691,89 @@ if prompt := st.chat_input(placeholder):
                 agent.on_step = on_step
                 
                 with st.status("🤖 Agent executing...", expanded=True) as status:
-                    # Run agent
-                    import asyncio
-                    
-                    # Update status with progress
-                    async def run_with_updates():
-                        task = asyncio.create_task(agent.run(prompt))
+                    try:
+                        import asyncio
                         
-                        while not task.done():
-                            if agent.traces:
-                                latest = agent.traces[-1]
-                                status.write(f"Step {latest.step}: {latest.thought[:80]}...")
-                            await asyncio.sleep(0.5)
+                        async def run_with_updates():
+                            task = asyncio.create_task(agent.run(prompt))
+                            
+                            while not task.done():
+                                if agent.traces:
+                                    latest = agent.traces[-1]
+                                    status.write(f"Step {latest.step}: {latest.thought[:80]}...")
+                                await asyncio.sleep(0.5)
+                            
+                            return await task
                         
-                        return await task
-                    
-                    response = asyncio.run(run_with_updates())
-                    
-                    status.update(label="✅ Complete!", state="complete")
-                    
-                    # Show trace if enabled
-                    if st.session_state.show_agent_traces and traces:
-                        with st.expander("🔍 Execution Trace", expanded=False):
-                            for trace in traces:
-                                st.markdown(f"**Step {trace.step}**")
-                                if trace.thought:
-                                    st.markdown(f"💭 {trace.thought[:200]}")
-                                for tc in trace.tool_calls:
-                                    icon = "✅" if tc.status == "success" else "❌"
-                                    st.markdown(f"{icon} `{tc.name}` ({tc.duration_ms:.0f}ms)")
-                                    st.json({"args": tc.arguments, "result": str(tc.result)[:300]})
-                    
-                    st.markdown(response)
-                    
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": response,
-                        "metadata": {
-                            "type": "agent_trace",
-                            "traces": [
-                                {
-                                    "step": t.step,
-                                    "thought": t.thought,
-                                    "tool_calls": [
-                                        {
-                                            "name": tc.name,
-                                            "arguments": tc.arguments,
-                                            "result": str(tc.result)[:500],
-                                            "status": tc.status,
-                                            "duration_ms": tc.duration_ms
-                                        }
-                                        for tc in t.tool_calls
-                                    ]
-                                }
-                                for t in traces
-                            ]
-                        }
-                    })
+                        response = asyncio.run(run_with_updates())
+                        
+                        status.update(label="✅ Complete!", state="complete")
+                        
+                        # Show trace if enabled
+                        if st.session_state.show_agent_traces and traces:
+                            with st.expander("🔍 Execution Trace", expanded=False):
+                                for trace in traces:
+                                    st.markdown(f"**Step {trace.step}**")
+                                    if trace.thought:
+                                        st.markdown(f"💭 {trace.thought[:200]}")
+                                    for tc in trace.tool_calls:
+                                        icon = "✅" if tc.status == "success" else "❌"
+                                        st.markdown(f"{icon} `{tc.name}` ({tc.duration_ms:.0f}ms)")
+                                        with st.expander("Details"):
+                                            st.json({"args": tc.arguments, "result": str(tc.result)[:300]})
+                        
+                        st.markdown(response)
+                        
+                        # Download agent result
+                        agent_report = f"# Agent Task: {prompt}\n\n## Result\n{response}\n\n## Execution Trace\n\n"
+                        for t in traces:
+                            agent_report += f"### Step {t.step}\n{t.thought}\n\n"
+                            for tc in t.tool_calls:
+                                agent_report += f"- **{tc.name}**: {tc.result}\n\n"
+                        
+                        st.download_button(
+                            "⬇️ Download Agent Report",
+                            data=agent_report,
+                            file_name="agent_report.md",
+                            mime="text/markdown"
+                        )
+                        
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": response,
+                            "metadata": {
+                                "type": "agent_trace",
+                                "traces": [
+                                    {
+                                        "step": t.step,
+                                        "thought": t.thought,
+                                        "tool_calls": [
+                                            {
+                                                "name": tc.name,
+                                                "arguments": tc.arguments,
+                                                "result": str(tc.result)[:500],
+                                                "status": tc.status,
+                                                "duration_ms": tc.duration_ms
+                                            }
+                                            for tc in t.tool_calls
+                                        ]
+                                    }
+                                    for t in traces
+                                ]
+                            }
+                        })
+                        
+                    except Exception as e:
+                        st.error(f"Agent error: {str(e)}")
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": f"Agent execution failed: {str(e)}"
+                        })
         
         st.rerun()
     
+    # Normal Chat Mode
     else:
-        # NORMAL CHAT MODE
         st.session_state.messages.append({
             "role": "user",
             "content": prompt
@@ -592,6 +795,15 @@ if prompt := st.chat_input(placeholder):
                 response = response_data["content"]
             
             st.markdown(response)
+            
+            # Download response
+            st.download_button(
+                "⬇️ Download Response",
+                data=response,
+                file_name="response.md",
+                mime="text/markdown",
+                key=f"dl_resp_{len(st.session_state.messages)}"
+            )
         
         st.session_state.messages.append({
             "role": "assistant",
@@ -599,3 +811,4 @@ if prompt := st.chat_input(placeholder):
         })
         
         st.rerun()
+

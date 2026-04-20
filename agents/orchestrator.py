@@ -37,18 +37,18 @@ class SwarmOrchestrator:
             plan = planner.create_plan(task)
         
         # Initialize subtasks
-        self.subtasks = {st.id: st for st in plan}
+        self.subtasks = {st_obj.id: st_obj for st_obj in plan}
         
         completed = {}
         running = set()
         
         while len(completed) < len(self.subtasks):
-            # Find ready tasks
+            # Find ready tasks - FIXED VARIABLE NAME
             ready = [
-                st for st in self.subtasks.values()
-                if st.status == "pending"
-                and all(dep in completed for dep in st.dependencies)
-                and st.id not in running
+                subtask for subtask in self.subtasks.values()
+                if subtask.status == "pending"
+                and all(dep in completed for dep in subtask.dependencies)
+                and subtask.id not in running
             ]
             
             # Launch batch
@@ -56,37 +56,37 @@ class SwarmOrchestrator:
             
             if to_launch:
                 tasks = []
-                for st in to_launch:
-                    st.status = "running"
-                    st.started_at = datetime.now()
-                    running.add(st.id)
+                for subtask in to_launch:
+                    subtask.status = "running"
+                    subtask.started_at = datetime.now()
+                    running.add(subtask.id)
                     
-                    if st.agent_type in self.agent_factories:
-                        agent = self.agent_factories[st.agent_type]()
-                        coro = self._run_with_timeout(agent, st)
+                    if subtask.agent_type in self.agent_factories:
+                        agent = self.agent_factories[subtask.agent_type]()
+                        coro = self._run_with_timeout(agent, subtask)
                         tasks.append(coro)
                     else:
                         # Fallback to generic agent
-                        st.result = f"No agent factory for {st.agent_type}"
-                        st.status = "failed"
-                        completed[st.id] = st.result
-                        running.discard(st.id)
+                        subtask.result = f"No agent factory for {subtask.agent_type}"
+                        subtask.status = "failed"
+                        completed[subtask.id] = subtask.result
+                        running.discard(subtask.id)
                 
                 if tasks:
                     results = await asyncio.gather(*tasks, return_exceptions=True)
-                    for st, result in zip(to_launch, results):
-                        st.completed_at = datetime.now()
+                    for subtask, result in zip(to_launch, results):
+                        subtask.completed_at = datetime.now()
                         if isinstance(result, Exception):
-                            st.status = "failed"
-                            st.result = str(result)
+                            subtask.status = "failed"
+                            subtask.result = str(result)
                         else:
-                            st.status = "complete"
-                            st.result = result
-                        completed[st.id] = st.result
-                        running.discard(st.id)
+                            subtask.status = "complete"
+                            subtask.result = result
+                        completed[subtask.id] = subtask.result
+                        running.discard(subtask.id)
                         
                         if self.on_progress:
-                            self.on_progress(st)
+                            self.on_progress(subtask)
             else:
                 if not running and len(completed) < len(self.subtasks):
                     # Deadlock detected
@@ -119,11 +119,10 @@ class SwarmOrchestrator:
     
     async def _synthesize(self, results: Dict, original_task: str) -> str:
         """Synthesize parallel results."""
-        # Simple synthesis - can be enhanced with LLM
         parts = [f"## Task: {original_task}\n"]
         for st_id, result in results.items():
-            st = self.subtasks.get(st_id)
-            if st:
-                parts.append(f"\n### {st.description}\n{str(result)[:500]}")
+            subtask = self.subtasks.get(st_id)
+            if subtask:
+                parts.append(f"\n### {subtask.description}\n{str(result)[:500]}")
         
         return "\n".join(parts)
