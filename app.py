@@ -3,69 +3,12 @@ from backend import chat_api, generate_image, analyze_file, MODELS, SYSTEM_PROMP
 import uuid
 import base64
 from pathlib import Path
-import json
 import time
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="DenLab", page_icon="🧪", layout="wide")
 
-# ---------- SESSION PERSISTENCE (LocalStorage via JavaScript) ----------
-st.markdown("""
-<script>
-// Save session to localStorage
-function saveSession(key, data) {
-    localStorage.setItem(key, JSON.stringify(data));
-}
-
-// Load session from localStorage
-function loadSession(key) {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : null;
-}
-
-// Get all session keys
-function getAllSessions() {
-    const sessions = {};
-    for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key.startsWith('denlab_')) {
-            sessions[key.replace('denlab_', '')] = JSON.parse(localStorage.getItem(key));
-        }
-    }
-    return sessions;
-}
-
-// Delete session
-function deleteSession(key) {
-    localStorage.removeItem(key);
-}
-
-// Send data to Streamlit
-if (window.parent) {
-    window.parent.postMessage({type: 'streamlit:setComponentValue', value: 'loaded'}, '*');
-}
-</script>
-""", unsafe_allow_html=True)
-
-# Custom component for localStorage
-from streamlit.components.v1 import html
-
-def get_local_storage(key: str) -> dict:
-    """Read from localStorage via custom component."""
-    html(f"""
-    <script>
-    const data = localStorage.getItem('denlab_{key}');
-    if (data) {{
-        window.parent.postMessage({{
-            type: 'streamlit:setComponentValue',
-            value: JSON.parse(data)
-        }}, '*');
-    }}
-    </script>
-    """, height=0)
-    return None
-
-# ---------- LIGHT THEME CSS ----------
+# ---------- LIGHT THEME CSS (Refined) ----------
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
@@ -156,33 +99,26 @@ st.markdown("""
         text-align: center;
     }
     
-    /* Session cards */
-    .session-card {
-        background: #ffffff;
+    /* Code blocks */
+    pre {
+        background: #f8f9fa;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
-        padding: 8px 12px;
-        margin: 4px 0;
-        cursor: pointer;
+        padding: 12px;
+        overflow-x: auto;
+        font-size: 13px;
     }
     
-    .session-card:hover {
+    code {
         background: #f0f2f6;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- SESSION STATE (with query_params persistence) ----------
-# Use URL query params for session ID (survives refresh)
-if "session_id" not in st.query_params:
-    st.query_params["session_id"] = str(uuid.uuid4())
-
-current_session_id = st.query_params["session_id"]
-
-# Initialize all_sessions in session_state
-if "all_sessions" not in st.session_state:
-    st.session_state.all_sessions = {}
-
+# ---------- SESSION STATE ----------
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -201,10 +137,13 @@ if "pending_upload" not in st.session_state:
 if "processing_upload" not in st.session_state:
     st.session_state.processing_upload = False
 
+if "all_sessions" not in st.session_state:
+    st.session_state.all_sessions = {}
+
 if "current_session_name" not in st.session_state:
     st.session_state.current_session_name = "Main"
 
-# Save current session to all_sessions
+# Save current session
 if st.session_state.messages:
     st.session_state.all_sessions[st.session_state.current_session_name] = {
         "messages": st.session_state.messages.copy(),
@@ -216,10 +155,10 @@ if st.session_state.messages:
 with st.sidebar:
     st.title("🧪 DenLab")
     
-    st.subheader("Model")
+    st.subheader("🤖 Model")
     model_names = list(MODELS.keys())
     current_idx = list(MODELS.values()).index(st.session_state.model) if st.session_state.model in MODELS.values() else 0
-    model_choice = st.selectbox("Select model", model_names, index=current_idx)
+    model_choice = st.selectbox("Select model", model_names, index=current_idx, label_visibility="collapsed")
     st.session_state.model = MODELS[model_choice]
     
     st.divider()
@@ -229,7 +168,7 @@ with st.sidebar:
     
     col1, col2 = st.columns([3, 1])
     with col1:
-        new_session_name = st.text_input("New session name", placeholder="Name (optional)", label_visibility="collapsed")
+        new_session_name = st.text_input("New session", placeholder="Name (optional)", label_visibility="collapsed")
     with col2:
         if st.button("➕", use_container_width=True, help="Create new session"):
             name = new_session_name if new_session_name else f"Session {len(st.session_state.all_sessions) + 1}"
@@ -247,17 +186,16 @@ with st.sidebar:
     
     # List saved sessions
     if st.session_state.all_sessions:
-        st.markdown("**Saved sessions:**")
-        for sess_name, sess_data in sorted(st.session_state.all_sessions.items(), key=lambda x: x[1].get("timestamp", 0), reverse=True):
-            col1, col2, col3 = st.columns([5, 1, 1])
+        for sess_name, sess_data in sorted(st.session_state.all_sessions.items(), key=lambda x: x[1].get("timestamp", 0), reverse=True)[:10]:
+            col1, col2 = st.columns([5, 1])
             with col1:
-                if st.button(f"📁 {sess_name}", use_container_width=True, key=f"load_{sess_name}"):
+                if st.button(f"📁 {sess_name[:20]}", use_container_width=True, key=f"load_{sess_name}", help=f"Load {sess_name}"):
                     st.session_state.current_session_name = sess_name
                     st.session_state.messages = sess_data["messages"].copy()
                     st.session_state.model = sess_data.get("model", "openai")
                     st.rerun()
-            with col3:
-                if st.button("🗑️", key=f"del_{sess_name}", help="Delete session"):
+            with col2:
+                if st.button("🗑️", key=f"del_{sess_name}", help="Delete"):
                     del st.session_state.all_sessions[sess_name]
                     if st.session_state.current_session_name == sess_name:
                         st.session_state.current_session_name = "Main"
@@ -270,13 +208,13 @@ with st.sidebar:
     st.divider()
     
     # Export
-    if st.button("📥 Export Current Session", use_container_width=True):
+    if st.button("📥 Export Chat", use_container_width=True):
         export_text = "\n\n".join([
             f"**{m['role'].upper()}**: {m['content']}"
             for m in st.session_state.messages if m['role'] != 'system'
         ])
         st.download_button(
-            "Download",
+            "Download .md",
             export_text,
             f"denlab_{st.session_state.current_session_name}.md",
             use_container_width=True
@@ -289,10 +227,11 @@ with st.sidebar:
     uploaded_file = st.file_uploader(
         "Upload for analysis",
         type=["txt", "py", "js", "html", "css", "json", "md", "csv", "php", "java", "c", "cpp", "png", "jpg", "jpeg"],
-        key=f"uploader_{st.session_state.uploader_key}"
+        key=f"uploader_{st.session_state.uploader_key}",
+        label_visibility="collapsed"
     )
     
-    st.caption(f"v2.2 · {st.session_state.current_session_name}")
+    st.caption(f"v2.3 · {st.session_state.current_session_name}")
 
 # ---------- HANDLE FILE UPLOAD ----------
 if uploaded_file and not st.session_state.processing_upload:
@@ -307,7 +246,6 @@ if st.session_state.pending_upload and st.session_state.processing_upload:
     mime_type = file_obj.type if hasattr(file_obj, 'type') else ""
     
     if mime_type and mime_type.startswith("image/"):
-        # Handle image upload
         file_bytes = file_obj.read()
         
         st.session_state.messages.append({"role": "user", "content": f"🖼️ {filename}"})
@@ -323,7 +261,6 @@ if st.session_state.pending_upload and st.session_state.processing_upload:
         
         st.session_state.messages.append({"role": "assistant", "content": analysis})
     else:
-        # Handle text/code file
         try:
             content = file_obj.read().decode('utf-8', errors='ignore')
         except:
@@ -345,7 +282,6 @@ if st.session_state.pending_upload and st.session_state.processing_upload:
         
         st.session_state.messages.append({"role": "assistant", "content": analysis})
     
-    # Save to session
     st.session_state.all_sessions[st.session_state.current_session_name] = {
         "messages": st.session_state.messages.copy(),
         "model": st.session_state.model,
@@ -409,7 +345,6 @@ if prompt := st.chat_input("Message DenLab... (/imagine for images)"):
         
         st.session_state.messages.append({"role": "assistant", "content": response})
     
-    # Save session
     st.session_state.all_sessions[st.session_state.current_session_name] = {
         "messages": st.session_state.messages.copy(),
         "model": st.session_state.model,
