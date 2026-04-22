@@ -17,7 +17,7 @@ class SessionManager:
         session = Session(id=sid, name=name)
         session.messages.append(ChatMessage(role=MessageRole.SYSTEM, 
                                           content="You are DenLab..."))
-        st.session_state.sessions[sid] = session.model_dump()
+        st.session_state.sessions[sid] = session.dict()
         st.session_state.current_session = sid
         return sid
     
@@ -27,7 +27,7 @@ class SessionManager:
         return Session(**data) if data else self.create_session("Recovery")
     
     def update(self, session: Session):
-        st.session_state.sessions[session.id] = session.model_dump()
+        st.session_state.sessions[session.id] = session.dict()
     
     def delete(self, sid: str):
         if sid in st.session_state.sessions:

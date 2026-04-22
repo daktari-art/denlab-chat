@@ -1,4 +1,4 @@
-"""UI Components for DenLab v4.2 - Kimi-inspired clean design system.
+"""UI Components for DenLab v4.0 - Kimi-inspired design system.
 Provides reusable components for chat interface, sidebar, and agent displays.
 """
 import streamlit as st
@@ -8,33 +8,34 @@ from typing import Optional, Dict, Any, List, Callable
 
 # ============ CSS THEME ============
 def apply_kimi_theme():
-    """Apply Kimi-inspired clean light theme."""
+    """Apply Kimi-inspired dark theme with high contrast."""
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         
-        /* Main background - clean light gray */
-        .stApp { background-color: #f5f5f5 !important; }
+        /* Main background - near black */
+        .stApp { background-color: #0d0d0d !important; }
         
+        /* Content area */
         .main > div {
             max-width: 800px;
             margin: 0 auto;
             padding: 0 20px 160px 20px;
         }
         
-        /* Sidebar - clean dark */
+        /* Sidebar - dark and clean */
         [data-testid="stSidebar"] {
             background-color: #111111 !important;
             border-right: 1px solid #222222 !important;
-            min-width: 260px !important;
-            max-width: 260px !important;
+            min-width: 280px !important;
+            max-width: 280px !important;
         }
         
         /* Chat messages */
         .stChatMessage {
             background-color: transparent !important;
-            padding: 4px 0 !important;
+            padding: 6px 0 !important;
             margin: 2px 0 !important;
             border: none !important;
         }
@@ -45,252 +46,160 @@ def apply_kimi_theme():
         }
         
         [data-testid="stChatMessageContent"] {
-            color: #333333 !important;
-            font-size: 14px !important;
+            color: #e8e8e8 !important;
+            font-size: 15px !important;
             line-height: 1.7 !important;
         }
         
         /* User message bubble */
         [data-testid="stChatMessage"][data-testid*="user"] {
-            background: #ffffff !important;
-            border-radius: 12px !important;
-            padding: 12px 16px !important;
-            margin: 6px 0 !important;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+            background: #1a1a1a !important;
+            border-radius: 16px !important;
+            padding: 16px 20px !important;
+            margin: 8px 0 !important;
         }
         
-        /* Assistant message bubble */
-        [data-testid="stChatMessage"][data-testid*="assistant"] {
-            background: #ffffff !important;
-            border-radius: 12px !important;
-            padding: 12px 16px !important;
-            margin: 6px 0 !important;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
-        }
-        
-        /* Chat input - white/light */
+        /* Chat input - high contrast */
         .stChatInput {
             position: fixed !important;
-            bottom: 24px !important;
+            bottom: 30px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
-            width: calc(100% - 320px) !important;
+            width: calc(100% - 360px) !important;
             max-width: 760px !important;
-            background: #ffffff !important;
-            border: 1px solid #e0e0e0 !important;
+            background: #1a1a1a !important;
+            border: 1px solid #333333 !important;
             border-radius: 24px !important;
-            padding: 4px 12px !important;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1) !important;
+            padding: 4px 8px !important;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.6) !important;
             z-index: 1000 !important;
         }
         
         .stChatInput:focus-within {
-            border-color: #10a37f !important;
-            box-shadow: 0 4px 20px rgba(16, 163, 127, 0.12) !important;
+            border-color: #4a9eff !important;
+            box-shadow: 0 4px 24px rgba(74, 158, 255, 0.15) !important;
         }
         
         .stChatInput textarea {
             background: transparent !important;
             border: none !important;
-            color: #333333 !important;
-            font-size: 14px !important;
-            padding: 12px 16px !important;
+            color: #ffffff !important;
+            font-size: 15px !important;
+            padding: 12px 60px 12px 16px !important;
         }
         
         .stChatInput textarea::placeholder {
-            color: #999999 !important;
-            font-size: 14px !important;
-        }
-        
-        .stChatInput button {
-            background: #10a37f !important;
-            color: white !important;
-            border-radius: 50% !important;
-            width: 32px !important;
-            height: 32px !important;
-            min-width: 32px !important;
-            padding: 0 !important;
-            border: none !important;
-        }
-        
-        .stChatInput button:hover {
-            background: #0d8c6d !important;
+            color: #888888 !important;
+            font-size: 15px !important;
         }
         
         /* Buttons */
         .stButton button {
             background: transparent !important;
-            color: #666 !important;
-            border: 1px solid #e0e0e0 !important;
+            color: #999999 !important;
+            border: 1px solid #2a2a2a !important;
             border-radius: 8px !important;
             padding: 6px 12px !important;
-            font-size: 12px !important;
-            transition: all 0.15s ease !important;
+            font-size: 13px !important;
+            transition: all 0.2s ease !important;
         }
         
         .stButton button:hover {
-            background: #f5f5f5 !important;
-            border-color: #ccc !important;
-            color: #333 !important;
-        }
-        
-        .stButton button[kind="primary"] {
-            background: #111111 !important;
-            color: #ffffff !important;
-            border-color: #111111 !important;
+            background: #222222 !important;
+            border-color: #4a9eff !important;
+            color: #4a9eff !important;
         }
         
         /* Compact action buttons */
         .action-btn button {
             background: transparent !important;
             border: none !important;
-            color: #999 !important;
+            color: #666666 !important;
             padding: 4px 6px !important;
-            font-size: 13px !important;
+            font-size: 14px !important;
             min-height: 28px !important;
             width: 28px !important;
             border-radius: 6px !important;
         }
         
         .action-btn button:hover {
-            background: #f0f0f0 !important;
-            color: #555 !important;
+            background: #222222 !important;
+            color: #e0e0e0 !important;
         }
         
         /* Code blocks */
         pre {
-            background: #f6f8fa !important;
-            border: 1px solid #e1e4e8 !important;
-            border-radius: 10px !important;
-            padding: 14px !important;
-            font-size: 13px !important;
+            background: #161616 !important;
+            border: 1px solid #2a2a2a !important;
+            border-radius: 12px !important;
+            padding: 16px !important;
         }
         
         code {
-            background: #f0f0f0 !important;
-            color: #333333 !important;
+            background: #1a1a1a !important;
             padding: 2px 6px !important;
             border-radius: 4px !important;
-            font-size: 13px !important;
+            color: #e8e8e8 !important;
             font-family: 'SF Mono', 'Fira Code', monospace !important;
-        }
-        
-        pre code {
-            background: transparent !important;
-            padding: 0 !important;
+            font-size: 13px !important;
         }
         
         /* Typography */
-        h1 { font-size: 20px !important; font-weight: 700 !important; color: #111 !important; }
-        h2 { font-size: 16px !important; font-weight: 600 !important; color: #333 !important; }
-        h3 { font-size: 14px !important; font-weight: 600 !important; color: #444 !important; }
-        h4 { font-size: 13px !important; font-weight: 600 !important; color: #555 !important; }
-        p { color: #333 !important; font-size: 14px !important; line-height: 1.7 !important; }
-        strong { font-weight: 600 !important; color: #222 !important; }
+        h1, h2, h3, h4, h5, h6 { color: #ffffff !important; font-weight: 600 !important; }
+        p { color: #d0d0d0 !important; }
         
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
         
-        /* Spinner */
-        .stSpinner > div { border-color: #10a37f !important; }
+        /* Status and spinner */
+        .stSpinner > div { border-color: #4a9eff !important; }
         
         /* Expander */
         .stExpander {
-            border: 1px solid #e8e8e8 !important;
-            border-radius: 10px !important;
-            background: #ffffff !important;
+            border: 1px solid #222 !important;
+            border-radius: 8px !important;
+            background: #161616 !important;
+        }
+        
+        /* Download button */
+        .stDownloadButton button {
+            background: #1f6feb !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 8px !important;
+            padding: 6px 14px !important;
+            font-size: 13px !important;
         }
         
         /* Dividers */
-        hr { border-color: #e8e8e8 !important; margin: 10px 0 !important; }
+        hr { border-color: #222222 !important; margin: 12px 0 !important; }
         
         /* Caption */
-        .stCaption { color: #999 !important; font-size: 11px !important; }
-        
-        /* Sidebar elements */
-        [data-testid="stSidebar"] h1 { color: #ffffff !important; font-size: 16px !important; }
-        [data-testid="stSidebar"] p { color: #888 !important; font-size: 12px !important; }
-        
-        [data-testid="stSidebar"] .stButton button {
-            background: #1a1a1a !important;
-            color: #e0e0e0 !important;
-            border: 1px solid #2a2a2a !important;
-            font-size: 12px !important;
-        }
-        
-        [data-testid="stSidebar"] .stButton button:hover {
-            background: #2a2a2a !important;
-            border-color: #444 !important;
-        }
-        
-        [data-testid="stSidebar"] .stSelectbox > div > div {
-            background: #1a1a1a !important;
-            border-color: #2a2a2a !important;
-            color: #e0e0e0 !important;
-        }
-        
-        /* Agent badge */
-        .agent-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 12px;
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 20px;
-            font-size: 12px;
-            color: #166534;
-            font-weight: 500;
-        }
-        
-        .agent-dot {
-            width: 6px;
-            height: 6px;
-            background: #10a37f;
-            border-radius: 50%;
-            animation: agent-pulse 1.5s infinite;
-        }
-        
-        @keyframes agent-pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        
-        /* File attachment */
-        .file-attachment {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 14px;
-            background: #ffffff;
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 13px;
-            color: #555;
-        }
+        .stCaption { color: #666666 !important; font-size: 11px !important; }
         
         /* Agent progress */
         .agent-progress-container {
-            background: #ffffff;
-            border: 1px solid #e0e0e0;
+            background: #161616;
+            border: 1px solid #2a2a2a;
             border-radius: 12px;
-            padding: 14px 16px;
-            margin: 8px 0;
+            padding: 16px;
+            margin: 12px 0;
         }
         
         .agent-step-row {
             display: flex;
             align-items: center;
-            padding: 4px 0;
-            font-size: 12px;
-            color: #666;
+            padding: 6px 0;
+            border-bottom: 1px solid #1a1a1a;
         }
         
+        .agent-step-row:last-child { border-bottom: none; }
+        
         .step-indicator {
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
             display: inline-flex;
             align-items: center;
@@ -300,17 +209,17 @@ def apply_kimi_theme():
             flex-shrink: 0;
         }
         
-        .step-pending { background: #f0f0f0; color: #aaa; }
-        .step-running { background: #dbeafe; color: #3b82f6; }
-        .step-success { background: #d1fae5; color: #10a37f; }
-        .step-error { background: #fee2e2; color: #ef4444; }
+        .step-pending { background: #2a2a2a; color: #666; }
+        .step-running { background: #1a3a5c; color: #4a9eff; }
+        .step-success { background: #1a3a1a; color: #3fb950; }
+        .step-error { background: #3a1a1a; color: #f85149; }
     </style>
     """, unsafe_allow_html=True)
 
 
 # ============ SIDEBAR COMPONENT ============
 def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
-    """Render sidebar with model selector, sessions, and controls.
+    """Render sidebar with model selector, sessions, and file uploader.
     
     Returns:
         tuple: (selected_model, new_session_clicked, uploaded_file)
@@ -321,8 +230,8 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
         # Header
         st.markdown("""
             <div style="border-bottom: 1px solid #222; padding-bottom: 12px; margin-bottom: 12px;">
-                <h1 style="font-size: 16px; margin: 0; color: #fff; font-weight: 700;">DenLab Chat</h1>
-                <p style="font-size: 11px; color: #666; margin: 4px 0 0 0;">Kimi-inspired AI</p>
+                <h1 style="font-size: 18px; margin: 0; color: #fff; font-weight: 700;">🧪 DenLab</h1>
+                <p style="font-size: 11px; color: #666; margin: 4px 0 0 0;">v4.0 · Agentic AI</p>
             </div>
         """, unsafe_allow_html=True)
         
@@ -339,24 +248,21 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
         # Show capabilities
         caps = MODELS[choice].get("capabilities", [])
         if caps:
-            st.caption(" " + " ".join(caps))
+            st.caption(" · ".join(caps))
         
         st.divider()
         
-        # Agent mode
-        st.markdown('<p style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 6px;">Agent Mode</p>', unsafe_allow_html=True)
+        # Execution mode - STATIC switches (not in scrollable container)
+        st.markdown('<p style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 6px;">Execution Mode</p>', unsafe_allow_html=True)
         
-        agent_col1, agent_col2 = st.columns([3, 1])
-        with agent_col1:
-            st.markdown("""
-            <div class="agent-badge" style="margin-top:4px;">
-                <div class="agent-dot"></div>
-                <span>Agent</span>
-            </div>
-            """, unsafe_allow_html=True)
-        with agent_col2:
-            agent_mode = st.toggle("", value=st.session_state.get("agent_mode", False), label_visibility="collapsed")
-            st.session_state.agent_mode = agent_mode
+        agent_mode = st.toggle("🤖 Agent Mode", value=st.session_state.get("agent_mode", False))
+        st.session_state.agent_mode = agent_mode
+        
+        swarm_mode = False
+        if agent_mode:
+            swarm_mode = st.toggle("🐝 Swarm Mode", value=st.session_state.get("swarm_mode", False))
+            st.session_state.swarm_mode = swarm_mode
+            st.caption("Tools: search, research, code, fetch, file")
         
         st.divider()
         
@@ -367,7 +273,7 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
         with col1:
             new_name = st.text_input("", placeholder="New session...", label_visibility="collapsed", key="new_sess_input")
         with col2:
-            new_clicked = st.button("+", use_container_width=True, help="Create new session")
+            new_clicked = st.button("➕", use_container_width=True, help="Create new session")
         
         # Session list
         if sessions:
@@ -379,9 +285,9 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
             
             for sess_name, sess_data in sorted_sessions:
                 c1, c2, c3 = st.columns([6, 1, 1])
-                display = sess_name[:20] + "..." if len(sess_name) > 20 else sess_name
+                display = sess_name[:18] + "..." if len(sess_name) > 18 else sess_name
                 with c1:
-                    if st.button(f"{display}", use_container_width=True, key=f"sb_load_{sess_name}"):
+                    if st.button(f"📁 {display}", use_container_width=True, key=f"sb_load_{sess_name}"):
                         st.session_state.current_session = sess_name
                         st.session_state.messages = sess_data.get("messages", [])
                         st.session_state.model = sess_data.get("model", "openai")
@@ -396,7 +302,7 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
                         }
                         st.rerun()
                 with c3:
-                    if st.button("✕", key=f"sb_del_{sess_name}", help="Delete"):
+                    if st.button("🗑️", key=f"sb_del_{sess_name}", help="Delete"):
                         if sess_name in sessions:
                             del sessions[sess_name]
                         st.rerun()
@@ -406,7 +312,7 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
         # Export
         st.markdown('<p style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 6px;">Export</p>', unsafe_allow_html=True)
         
-        if st.button("Export Chat", use_container_width=True):
+        if st.button("📥 Export Chat", use_container_width=True):
             if "messages" in st.session_state:
                 export_text = "\n\n".join([
                     f"**{m['role'].upper()}**: {m['content']}"
@@ -420,9 +326,25 @@ def render_sidebar(model: str, sessions: dict, uploader_key: str) -> tuple:
                 )
         
         st.divider()
-        st.caption(f"v4.2 · {st.session_state.get('current_session', 'main')}")
+        
+        # Upload
+        st.markdown('<p style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 6px;">Upload</p>', unsafe_allow_html=True)
+        
+        uploaded = st.file_uploader(
+            "",
+            type=["txt", "py", "js", "ts", "jsx", "tsx", "html", "css", "json", "md",
+                  "csv", "xml", "yaml", "yml", "sh", "bash", "c", "cpp", "h", "hpp",
+                  "java", "kt", "swift", "rs", "go", "rb", "php", "sql",
+                  "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"],
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+            key=f"sb_uploader_{uploader_key}"
+        )
+        
+        st.divider()
+        st.caption(f"v4.0 · {st.session_state.get('current_session', 'main')}")
     
-    return selected_model, new_clicked, None
+    return selected_model, new_clicked, uploaded
 
 
 # ============ MESSAGE COMPONENTS ============
@@ -474,14 +396,14 @@ def render_chat_message(msg: dict, msg_idx: int = 0):
     with st.chat_message(role):
         if msg_type == "image":
             st.image(content, use_container_width=True)
-            st.caption("Generated image")
+            st.caption("🎨 Generated image")
         elif msg_type == "audio":
             st.audio(content, format='audio/mp3')
         elif msg_type == "file":
             st.markdown(content)
             file_key = metadata.get("file_key")
             if file_key and file_key in st.session_state.get("uploaded_files", {}):
-                with st.expander("Preview"):
+                with st.expander("📄 Preview"):
                     st.code(st.session_state.uploaded_files[file_key].get("content", "")[:3000])
         else:
             st.markdown(content)
@@ -494,16 +416,16 @@ def render_chat_message(msg: dict, msg_idx: int = 0):
 def render_welcome():
     """Render welcome screen."""
     st.markdown("""
-    <div style="text-align: center; padding: 80px 20px 40px;">
-        <div style="font-size: 36px; margin-bottom: 16px;">🧪</div>
-        <div style="font-size: 22px; font-weight: 700; color: #111; margin-bottom: 8px;">DenLab Chat</div>
-        <div style="font-size: 13px; color: #888; margin-bottom: 40px;">Kimi-inspired AI with multi-provider fallback</div>
-        <div style="font-size: 13px; color: #666; line-height: 2.2;">
-            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;font-weight:500;">/imagine</code> — Generate images</div>
-            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;font-weight:500;">/research</code> — Deep web research</div>
-            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;font-weight:500;">/code</code> — Generate & execute Python</div>
-            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;font-weight:500;">/analyze</code> — Analyze uploaded files</div>
-            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;font-weight:500;">/audio</code> — Text to speech</div>
+    <div style="text-align: center; padding: 60px 20px;">
+        <div style="font-size: 32px; margin-bottom: 12px;">🧪</div>
+        <div style="font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 8px;">DenLab v4.0</div>
+        <div style="font-size: 14px; color: #888; margin-bottom: 32px;">Beyond Conversational AI</div>
+        <div style="font-size: 13px; color: #666; line-height: 2;">
+            <div>/imagine [prompt] — Generate images</div>
+            <div>/research [topic] — Deep web research</div>
+            <div>/code [task] — Generate & execute Python</div>
+            <div>/analyze — Analyze uploaded files</div>
+            <div>/audio [text] — Text to speech</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -519,6 +441,7 @@ def render_agent_progress_kimi(traces: List[Any]):
     html += '<div style="font-size: 11px; font-weight: 600; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">Execution Progress</div>'
     
     for trace in traces:
+        # Determine step status
         has_tools = bool(trace.tool_calls)
         all_success = has_tools and all(tc.status == "success" for tc in trace.tool_calls)
         has_error = has_tools and any(tc.status == "error" for tc in trace.tool_calls)
@@ -542,17 +465,17 @@ def render_agent_progress_kimi(traces: List[Any]):
         
         html += f'<div class="agent-step-row">'
         html += f'<span class="step-indicator {status_class}">{icon}</span>'
-        html += f'<span style="color: #555; font-size: 13px;">{thought}</span>'
+        html += f'<span style="color: #ccc; font-size: 13px;">{thought}</span>'
         html += f'</div>'
         
         # Tool call details
         for tc in trace.tool_calls:
             tc_icon = "✓" if tc.status == "success" else "✗" if tc.status == "error" else "◐"
-            tc_color = "#10a37f" if tc.status == "success" else "#ef4444" if tc.status == "error" else "#3b82f6"
+            tc_color = "#3fb950" if tc.status == "success" else "#f85149" if tc.status == "error" else "#4a9eff"
             html += f'<div style="margin-left: 30px; padding: 2px 0; font-size: 11px; color: {tc_color};">'
             html += f'{tc_icon} <code style="font-size: 11px;">{tc.name}</code>'
             if tc.duration_ms:
-                html += f' <span style="color: #999;">({tc.duration_ms:.0f}ms)</span>'
+                html += f' <span style="color: #666;">({tc.duration_ms:.0f}ms)</span>'
             html += '</div>'
     
     html += '</div>'
@@ -601,10 +524,10 @@ def copy_to_clipboard_button(text: str, key: str, label: str = "📋"):
     }}
     </script>
     <button id="btn_{key}" onclick="copy_{key}()" style="
-        background: transparent; border: none; color: #999; 
+        background: transparent; border: none; color: #666; 
         padding: 4px 8px; border-radius: 6px; cursor: pointer;
-        font-size: 13px;
-    " onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
+        font-size: 14px;
+    " onmouseover="this.style.background='#222'" onmouseout="this.style.background='transparent'">
         {label}
     </button>
     """
@@ -623,9 +546,9 @@ def inject_pwa():
     }
     </script>
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#f5f5f5">
+    <meta name="theme-color" content="#0d0d0d">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DenLab">
     """
     st.markdown(pwa_html, unsafe_allow_html=True)

@@ -61,12 +61,11 @@ class ChatInterface:
                 response = self.client.chat(api_msgs, model=session.model, 
                                           temperature=session.temperature,
                                           stream=True, on_chunk=on_chunk)
-                response_text = response.get("content", "") if isinstance(response, dict) else str(response)
-                placeholder.markdown(response_text)
+                placeholder.markdown(response)
             
             session.messages.append({
                 "role": MessageRole.ASSISTANT,
-                "content": response_text
+                "content": response
             })
         
         self.sessions.update(session)
