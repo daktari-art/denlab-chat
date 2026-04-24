@@ -24,7 +24,6 @@ from chat_db import get_chat_db
 from ui_components import apply_clean_theme
 from components.sidebar import Sidebar, AdvancedSettings
 from components.chat_interface import ChatInterface, process_file_upload
-from components.agent_interface import get_swarm_config
 
 
 # ============================================================================
@@ -45,38 +44,50 @@ st.set_page_config(
 
 
 # ============================================================================
-# FORCE SIDEBAR VISIBLE (Hugging Face Spaces Fix)
+# CSS - CLEAN THEME (NO FORCED SIDEBAR - COLLAPSIBLE)
 # ============================================================================
 
-st.markdown("""
-<style>
-    /* Force sidebar visible on Hugging Face Spaces */
-    [data-testid="stSidebar"] {
-        min-width: 260px !important;
-        width: 260px !important;
-        transform: translateX(0px) !important;
-        position: relative !important;
-        display: block !important;
-    }
-    
-    /* Hide collapse button */
-    button[kind="header"], [data-testid="stSidebarCollapseButton"] {
-        display: none !important;
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        [data-testid="stSidebar"] {
+def apply_custom_css():
+    """Apply custom CSS with collapsible sidebar."""
+    st.markdown("""
+    <style>
+        /* Make collapse button visible and clickable */
+        button[kind="header"] {
+            display: flex !important;
+            background: transparent !important;
+            color: #888 !important;
+            border: none !important;
+        }
+        
+        button[kind="header"]:hover {
+            color: #10a37f !important;
+            background: rgba(255,255,255,0.05) !important;
+        }
+        
+        /* Chat input - fixed at bottom */
+        .stChatInput {
             position: fixed !important;
-            z-index: 1000 !important;
-            height: 100% !important;
+            bottom: 20px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: calc(100% - 300px) !important;
+            max-width: 760px !important;
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            border-radius: 28px !important;
+            padding: 4px 12px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
+            z-index: 999 !important;
         }
-        .main .block-container {
-            margin-left: 0px !important;
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stChatInput {
+                width: calc(100% - 20px) !important;
+            }
         }
-    }
-</style>
-""", unsafe_allow_html=True)
+    </style>
+    """, unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -198,12 +209,7 @@ def show_login_page():
                         else:
                             st.error(result["error"])
         
-        st.markdown(f"""
-            <p style="text-align:center;color:#999;font-size:11px;margin-top:32px;">
-                {AppConfig.title} v{AppConfig.version}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<p style="text-align:center;color:#999;font-size:11px;margin-top:32px;">{AppConfig.title} v{AppConfig.version}</p></div>', unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -222,7 +228,6 @@ def show_settings_page():
     with tab1:
         st.markdown("### Profile")
         st.write(f"**Username:** @{user['username']}")
-        
         if st.session_state.is_developer:
             st.info("👑 **Developer Mode Active** - Full access to all features.")
         
@@ -255,8 +260,7 @@ def show_settings_page():
             "Maximum Agent Steps",
             min_value=5,
             max_value=50,
-            value=st.session_state.agent_max_steps,
-            help="Higher values allow agent to handle more complex tasks"
+            value=st.session_state.agent_max_steps
         )
         
         st.markdown("### Cache & Memory")
@@ -285,6 +289,7 @@ def main():
     # Initialize
     init_session_state()
     apply_clean_theme()
+    apply_custom_css()
     
     # Check authentication
     if not st.session_state.current_user:
