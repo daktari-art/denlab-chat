@@ -1,6 +1,6 @@
 """
 DenLab Chat - Kimi-inspired Clean UI with Multi-Provider AI
-Enhanced with Memory, Cache, Tool Routing, and Branching.
+Enhanced with Memory, Cache, Tool Routing, Branching, and GitHub Integration.
 """
 
 import streamlit as st
@@ -29,7 +29,7 @@ st.set_page_config(
     menu_items={
         'Get Help': 'https://github.com/daktari-art/denlab-chat',
         'Report a bug': 'https://github.com/daktari-art/denlab-chat/issues',
-        'About': 'DenLab Chat - Advanced AI Assistant with Memory'
+        'About': 'DenLab Chat - Advanced AI Assistant with Memory & Tools'
     }
 )
 
@@ -48,6 +48,7 @@ Guidelines:
 
 Available tools:
 - web_search: Search the live web for current information
+- github_get_files: List all files in a GitHub repository (pass "owner/repo" format)
 - deep_research: Multi-hop research across sources
 - execute_code: Run Python code in sandboxed environment
 - fetch_url: Scrape specific web pages
@@ -87,11 +88,11 @@ def init_session():
         "messages_cache": [],
         "sidebar_collapsed": False,
         "agent_progress": [],
-        "auto_route": True,  # New: auto-enable agent for complex queries
-        "show_memory_context": False,  # New: show memory in UI
-        "current_branch": None,  # New: conversation branching
-        "cache_enabled": True,  # New: response caching
-        "memory_enabled": True,  # New: memory system
+        "auto_route": True,
+        "show_memory_context": False,
+        "current_branch": None,
+        "cache_enabled": True,
+        "memory_enabled": True,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -127,9 +128,8 @@ def format_message_content(content: str) -> str:
     def replace_code(match):
         lang = match.group(1) or "text"
         code = html_module.escape(html_module.unescape(match.group(2)))
-        return f'<div style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:10px;margin:8px 0;overflow:hidden;"><div style="display:flex;justify-content:space-between;align-items:center;background:#f0f0f0;padding:6px 12px;border-bottom:1px solid #e1e4e8;font-size:11px;color:#666;"><span>{lang}</span><span style="cursor:pointer;" onclick="navigator.clipboard.writeText(document.getElementById(\'code_{id}\').innerText)">📋 Copy</span></div><pre style="margin:0;padding:14px;overflow-x:auto;"><code id="code_{id}" style="background:transparent;padding:0;font-size:13px;line-height:1.5;">{code}</code></pre></div>'
+        return f'<div style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:10px;margin:8px 0;overflow:hidden;"><div style="display:flex;justify-content:space-between;align-items:center;background:#f0f0f0;padding:6px 12px;border-bottom:1px solid #e1e4e8;font-size:11px;color:#666;"><span>{lang}</span></div><pre style="margin:0;padding:14px;overflow-x:auto;"><code style="background:transparent;padding:0;font-size:13px;line-height:1.5;">{code}</code></pre></div>'
     
-    import uuid
     content = re.sub(code_pattern, replace_code, content, flags=re.DOTALL)
     content = re.sub(r'`([^`]+)`', r'<code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:13px;color:#10a37f;">\1</code>', content)
     content = re.sub(r'\*\*(.*?)\*\*', r'<strong style="font-weight:600;color:#222;">\1</strong>', content)
@@ -150,25 +150,79 @@ def ensure_conversation() -> str:
     
     return st.session_state.current_conversation_id
 
-# ============ TOOL FUNCTIONS ============
+# ============ IMPROVED TOOL FUNCTIONS ============
+
 def web_search(query: str) -> str:
+    """Search the web using DuckDuckGo API."""
     try:
-        url = f"https://ddg-api.herokuapp.com/search?query={requests.utils.quote(query)}&limit=5"
-        resp = requests.get(url, timeout=10)
+        url = f"https://api.duckduckgo.com/?q={requests.utils.quote(query)}&format=json&no_html=1&skip_disambig=1"
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "DenLab-Agent/1.0"})
+        
         if resp.status_code == 200:
+            data = resp.json()
             results = []
-            for item in resp.json()[:5]:
-                results.append({
-                    "title": item.get("title", ""),
-                    "snippet": item.get("snippet", ""),
-                    "url": item.get("link", "")
+            
+            if data.get("RelatedTopics"):
+                for item in data["RelatedTopics"][:5]:
+                    if isinstance(item, dict):
+                        text = item.get("Text", "")
+                        if text:
+                            results.append({
+                                "title": text[:100],
+                                "snippet": text[:300],
+                                "url": item.get("FirstURL", "")
+                            })
+            
+            if not results:
+                fallback_url = f"https://ddg-api.herokuapp.com/search?query={requests.utils.quote(query)}&limit=5"
+                fb_resp = requests.get(fallback_url, timeout=10)
+                if fb_resp.status_code == 200:
+                    for item in fb_resp.json()[:5]:
+                        results.append({
+                            "title": item.get("title", ""),
+                            "snippet": item.get("snippet", ""),
+                            "url": item.get("link", "")
+                        })
+            
+            return json.dumps({"success": True, "results": results, "query": query})
+        
+        return json.dumps({"success": False, "error": f"Search returned {resp.status_code}", "results": []})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "results": []})
+
+def github_get_files(repo: str) -> str:
+    """Get list of files from a GitHub repository."""
+    try:
+        # Parse owner/repo format
+        parts = repo.replace("github.com/", "").split("/")
+        if len(parts) >= 2:
+            owner = parts[-2]
+            repo_name = parts[-1].replace(".git", "")
+        else:
+            return json.dumps({"success": False, "error": "Invalid repo format. Use 'owner/repo' or GitHub URL"})
+        
+        # Try main branch first, then master
+        for branch in ["main", "master"]:
+            url = f"https://api.github.com/repos/{owner}/{repo_name}/git/trees/{branch}?recursive=1"
+            resp = requests.get(url, timeout=15, headers={"Accept": "application/vnd.github.v3+json"})
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                files = [item["path"] for item in data.get("tree", []) if item.get("type") == "blob"]
+                return json.dumps({
+                    "success": True, 
+                    "files": files[:100],
+                    "count": len(files),
+                    "repo": f"{owner}/{repo_name}",
+                    "branch": branch
                 })
-            return json.dumps({"success": True, "results": results})
-        return json.dumps({"success": False, "error": f"Status {resp.status_code}"})
+        
+        return json.dumps({"success": False, "error": f"Could not access repo {owner}/{repo_name}"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
 def deep_research(topic: str, depth: int = 2) -> str:
+    """Deep multi-source research."""
     try:
         findings, sources = [], []
         result = json.loads(web_search(topic))
@@ -202,51 +256,109 @@ def deep_research(topic: str, depth: int = 2) -> str:
         return json.dumps({"success": False, "error": str(e)})
 
 def execute_code(code: str) -> str:
+    """Execute Python code safely in a sandbox."""
+    import io
+    import sys
+    import traceback
+    
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    
     try:
-        import io, sys, traceback
-        old_out, old_err = sys.stdout, sys.stderr
-        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-        try:
-            exec(code, {"__builtins__": __builtins__})
-            return json.dumps({"success": True, "stdout": sys.stdout.getvalue(), "stderr": sys.stderr.getvalue()})
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e), "traceback": traceback.format_exc()})
-        finally:
-            sys.stdout, sys.stderr = old_out, old_err
+        safe_globals = {
+            "__builtins__": {
+                "print": print,
+                "range": range,
+                "len": len,
+                "str": str,
+                "int": int,
+                "float": float,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "set": set,
+                "bool": bool,
+                "sum": sum,
+                "min": min,
+                "max": max,
+                "abs": abs,
+                "round": round,
+                "enumerate": enumerate,
+                "zip": zip,
+                "sorted": sorted,
+                "reversed": reversed,
+            }
+        }
+        
+        exec(code, safe_globals)
+        stdout = sys.stdout.getvalue()
+        stderr = sys.stderr.getvalue()
+        
+        return json.dumps({
+            "success": True,
+            "stdout": stdout if stdout else "(no output)",
+            "stderr": stderr if stderr else ""
+        })
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 def fetch_url(url: str) -> str:
+    """Fetch and return content from a URL."""
     try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "DenLab/4.0"})
+        resp = requests.get(url, timeout=20, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
         if resp.status_code == 200:
-            return json.dumps({"success": True, "content": resp.text[:5000]})
-        return json.dumps({"success": False, "error": f"HTTP {resp.status_code}"})
+            content = resp.text[:8000]
+            clean = re.sub(r'<[^>]+>', ' ', content)
+            clean = re.sub(r'\s+', ' ', clean).strip()
+            return json.dumps({"success": True, "content": clean[:5000], "url": url})
+        return json.dumps({"success": False, "error": f"HTTP {resp.status_code}", "url": url})
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+        return json.dumps({"success": False, "error": str(e), "url": url})
 
 def read_file(path: str) -> str:
-    try:
-        if path in st.session_state.uploaded_files:
-            f = st.session_state.uploaded_files[path]
-            return json.dumps({
-                "success": True,
-                "content": f.get("content", "")[:10000],
-                "name": f.get("name")
-            })
-        return json.dumps({"success": False, "error": "File not found"})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+    """Read content from an uploaded file."""
+    if path in st.session_state.uploaded_files:
+        f = st.session_state.uploaded_files[path]
+        content = f.get("content", f.get("bytes", b""))
+        if isinstance(content, bytes):
+            try:
+                content = content.decode('utf-8', errors='ignore')
+            except:
+                content = str(content)
+        return json.dumps({
+            "success": True,
+            "content": content[:10000],
+            "name": f.get("name", path),
+            "size": len(content)
+        })
+    return json.dumps({"success": False, "error": f"File not found: {path}"})
 
 def write_file(path: str, content: str) -> str:
-    try:
-        st.session_state.uploaded_files[path] = {
-            "type": "text", "name": path, "content": content,
-            "size": len(content), "timestamp": datetime.now().isoformat()
-        }
-        return json.dumps({"success": True, "path": path, "size": len(content)})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+    """Write content to a file (in-memory storage)."""
+    st.session_state.uploaded_files[path] = {
+        "type": "text",
+        "name": path,
+        "content": content,
+        "size": len(content),
+        "timestamp": datetime.now().isoformat()
+    }
+    return json.dumps({
+        "success": True,
+        "path": path,
+        "size": len(content),
+        "message": f"File saved: {path}"
+    })
 
 def analyze_image(file_key: str, prompt: str = "Describe this image in detail.") -> str:
     try:
@@ -266,23 +378,58 @@ def analyze_image(file_key: str, prompt: str = "Describe this image in detail.")
         return json.dumps({"success": False, "error": str(e)})
 
 
+# ============ TOOLS REGISTRY ============
 TOOLS_REGISTRY = {
-    "web_search": {"func": web_search, "description": "Search the web", "params": {"query": {"type": "string", "description": "Search query"}}},
-    "deep_research": {"func": deep_research, "description": "Deep research", "params": {"topic": {"type": "string", "description": "Research topic"}}},
-    "execute_code": {"func": execute_code, "description": "Run Python code", "params": {"code": {"type": "string", "description": "Python code"}}},
-    "fetch_url": {"func": fetch_url, "description": "Fetch URL content", "params": {"url": {"type": "string", "description": "URL to fetch"}}},
-    "read_file": {"func": read_file, "description": "Read file", "params": {"path": {"type": "string", "description": "File path"}}},
-    "write_file": {"func": write_file, "description": "Write file", "params": {"path": {"type": "string", "description": "File path"}, "content": {"type": "string", "description": "Content"}}},
-    "analyze_image": {"func": analyze_image, "description": "Analyze image", "params": {"file_key": {"type": "string", "description": "File key"}, "prompt": {"type": "string", "description": "Analysis prompt"}}},
+    "web_search": {
+        "func": web_search,
+        "description": "Search the web for current information. Returns titles, snippets, and URLs.",
+        "params": {"query": {"type": "string", "description": "Search query"}}
+    },
+    "github_get_files": {
+        "func": github_get_files,
+        "description": "Get list of files from a GitHub repository. Pass the repo URL or 'owner/repo' format.",
+        "params": {"repo": {"type": "string", "description": "GitHub repository URL or 'owner/repo'"}}
+    },
+    "deep_research": {
+        "func": deep_research,
+        "description": "Deep multi-source research across the web.",
+        "params": {"topic": {"type": "string", "description": "Research topic"}, "depth": {"type": "integer", "description": "Research depth (1-3)"}}
+    },
+    "execute_code": {
+        "func": execute_code,
+        "description": "Execute Python code in a safe sandbox. Returns stdout/stderr.",
+        "params": {"code": {"type": "string", "description": "Python code to execute"}}
+    },
+    "fetch_url": {
+        "func": fetch_url,
+        "description": "Fetch and read content from any URL. Returns cleaned text content.",
+        "params": {"url": {"type": "string", "description": "URL to fetch"}}
+    },
+    "read_file": {
+        "func": read_file,
+        "description": "Read content from an uploaded file in the current session.",
+        "params": {"path": {"type": "string", "description": "File path or key"}}
+    },
+    "write_file": {
+        "func": write_file,
+        "description": "Write content to a file (stored in session memory).",
+        "params": {"path": {"type": "string", "description": "File path"}, "content": {"type": "string", "description": "Content to write"}}
+    },
+    "analyze_image": {
+        "func": analyze_image,
+        "description": "Analyze an uploaded image using vision AI.",
+        "params": {"file_key": {"type": "string", "description": "File key of uploaded image"}, "prompt": {"type": "string", "description": "Analysis prompt"}}
+    },
 }
 
 def get_tool_schema() -> List[Dict]:
+    """Generate OpenAI-compatible tool schema from registry."""
     tools = []
     for name, meta in TOOLS_REGISTRY.items():
-        props = {}
+        properties = {}
         required = []
         for param_name, param_info in meta["params"].items():
-            props[param_name] = {
+            properties[param_name] = {
                 "type": param_info.get("type", "string"),
                 "description": param_info.get("description", "")
             }
@@ -295,7 +442,7 @@ def get_tool_schema() -> List[Dict]:
                 "description": meta["description"],
                 "parameters": {
                     "type": "object",
-                    "properties": props,
+                    "properties": properties,
                     "required": required
                 }
             }
@@ -303,6 +450,7 @@ def get_tool_schema() -> List[Dict]:
     return tools
 
 def execute_tool_call(tc_data: Dict) -> Dict:
+    """Execute a tool call and return result."""
     fn = tc_data.get("function", {})
     name = fn.get("name", "unknown")
     args_str = fn.get("arguments", "{}")
@@ -310,7 +458,7 @@ def execute_tool_call(tc_data: Dict) -> Dict:
     try:
         args = json.loads(args_str) if isinstance(args_str, str) else args_str
     except json.JSONDecodeError:
-        return {"name": name, "status": "error", "result": "Invalid arguments JSON", "duration_ms": 0}
+        return {"name": name, "status": "error", "result": "Invalid JSON arguments", "duration_ms": 0}
     
     if name not in TOOLS_REGISTRY:
         return {"name": name, "status": "error", "result": f"Tool '{name}' not available", "duration_ms": 0}
@@ -324,18 +472,37 @@ def execute_tool_call(tc_data: Dict) -> Dict:
         status = "error"
     
     duration_ms = (time.time() - start) * 1000
-    return {"name": name, "status": status, "result": str(result)[:4000], "duration_ms": duration_ms}
+    
+    if not isinstance(result, str):
+        result = json.dumps(result)
+    
+    return {
+        "name": name,
+        "status": status,
+        "result": result[:4000],
+        "duration_ms": duration_ms,
+        "arguments": args
+    }
 
 
-# ============ AGENT EXECUTION ============
+# ============ IMPROVED AGENT EXECUTION ============
 
 def run_agent_task(prompt: str, model: str, progress_placeholder, user_id: str = None) -> Dict[str, Any]:
+    """Execute agent task with proper tool execution and result display."""
     client = get_enhanced_client()
     traces = []
-    max_steps = 12
+    max_steps = 8
     
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + "\n\nYou have tools available. Use them when needed. Think step by step."},
+        {"role": "system", "content": SYSTEM_PROMPT + """
+
+IMPORTANT: You have tools available. Use them to get real data from the web.
+- Use github_get_files to list files in a GitHub repository (pass "owner/repo" format)
+- Use web_search to find current information
+- Use fetch_url to get content from any webpage
+- Use execute_code to run Python calculations
+
+When you have the final answer, respond with just the answer (no tool calls)."""},
         {"role": "user", "content": prompt}
     ]
     
@@ -350,100 +517,143 @@ def run_agent_task(prompt: str, model: str, progress_placeholder, user_id: str =
             <div style="height:4px;background:#f0f0f0;border-radius:2px;overflow:hidden;margin-bottom:10px;">
                 <div style="height:100%;width:{(step/max_steps)*100}%;background:linear-gradient(90deg,#10a37f,#34d399);border-radius:2px;"></div>
             </div>
-            <div style="font-size:12px;color:#666;">Thinking...</div>
+            <div style="font-size:12px;color:#666;">Processing...</div>
         </div>
         """, unsafe_allow_html=True)
         
-        response = client.chat(messages, model=model, tools=get_tool_schema(), user_id=user_id)
-        
-        if response.get("guardrail_triggered"):
-            return {"content": response["content"], "traces": traces}
-        
-        content = response.get("content") or ""
-        tool_calls_raw = response.get("tool_calls") or []
-        provider = response.get("provider", "unknown")
-        
-        trace = {
-            "step": step,
-            "thought": content[:200] if content else f"Step {step}",
-            "tool_calls": [],
-            "provider": provider
-        }
-        
-        if tool_calls_raw:
-            tool_results = []
-            for tc_raw in tool_calls_raw:
-                tc_result = execute_tool_call(tc_raw)
-                trace["tool_calls"].append(tc_result)
+        try:
+            response = client.chat(messages, model=model, tools=get_tool_schema(), user_id=user_id)
+            
+            if response.get("guardrail_triggered"):
+                return {"content": response["content"], "traces": traces}
+            
+            content = response.get("content") or ""
+            tool_calls_raw = response.get("tool_calls") or []
+            provider = response.get("provider", "unknown")
+            
+            if not tool_calls_raw:
+                traces.append({
+                    "step": step,
+                    "thought": content[:200] if content else "Final response",
+                    "tool_calls": [],
+                    "provider": provider
+                })
                 
-                tool_msg = {
-                    "role": "tool",
-                    "content": str(tc_result["result"])[:4000],
-                    "tool_call_id": tc_raw.get("id", f"call_{step}")
-                }
-                messages.append(tool_msg)
-                tool_results.append(tool_msg)
+                progress_placeholder.markdown(f"""
+                <div class="agent-progress-container">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span>✅</span>
+                        <span>Complete</span>
+                    </div>
+                    <div style="height:4px;background:#f0f0f0;border-radius:2px;overflow:hidden;">
+                        <div style="height:100%;width:100%;background:#10a37f;border-radius:2px;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                return {"content": content or "Task completed.", "traces": traces}
+            
+            trace = {
+                "step": step,
+                "thought": content[:200] if content else f"Using tools...",
+                "tool_calls": [],
+                "provider": provider
+            }
             
             assistant_msg = {
                 "role": "assistant",
                 "content": content or "Using tools...",
                 "tool_calls": [
-                    {"id": tc_raw.get("id", ""), "type": "function", "function": tc_raw.get("function", {})}
-                    for tc_raw in tool_calls_raw
+                    {
+                        "id": tc.get("id", f"call_{step}_{i}"),
+                        "type": "function",
+                        "function": tc.get("function", {})
+                    }
+                    for i, tc in enumerate(tool_calls_raw)
                 ]
             }
             messages.append(assistant_msg)
+            
+            tool_results = []
+            for tc_raw in tool_calls_raw:
+                tc_result = execute_tool_call(tc_raw)
+                trace["tool_calls"].append(tc_result)
+                
+                status_icon = "✓" if tc_result["status"] == "success" else "✗"
+                progress_placeholder.markdown(f"""
+                <div class="agent-progress-container">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span>{status_icon}</span>
+                        <span><code>{tc_result['name']}</code></span>
+                        <span style="font-size:11px;color:#888;">({tc_result['duration_ms']:.0f}ms)</span>
+                    </div>
+                    <div style="font-size:11px;color:#666;margin-top:4px;word-break:break-all;">
+                        {str(tc_result['result'])[:200]}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                time.sleep(0.2)
+                
+                tool_msg = {
+                    "role": "tool",
+                    "content": tc_result["result"][:4000],
+                    "tool_call_id": tc_raw.get("id", f"call_{step}")
+                }
+                messages.append(tool_msg)
+                tool_results.append(tool_msg)
+            
             traces.append(trace)
             
-            tool_summary = " ".join([f"{'✓' if t['status'] == 'success' else '✗'} {t['name']}" for t in trace["tool_calls"]])
-            
-            progress_placeholder.markdown(f"""
-            <div class="agent-progress-container">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                    <span>🤖</span>
-                    <span>Step {step}/{max_steps}</span>
-                    <span style="color:#10a37f;">{tool_summary}</span>
+            if tool_results:
+                progress_placeholder.markdown(f"""
+                <div class="agent-progress-container">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span>🤖</span>
+                        <span>Analyzing results...</span>
+                    </div>
+                    <div style="height:4px;background:#f0f0f0;border-radius:2px;overflow:hidden;">
+                        <div style="height:100%;width:{(step/max_steps)*100}%;background:#3b82f6;border-radius:2px;"></div>
+                    </div>
                 </div>
-                <div style="height:4px;background:#f0f0f0;border-radius:2px;overflow:hidden;margin-bottom:10px;">
-                    <div style="height:100%;width:{(step/max_steps)*100}%;background:linear-gradient(90deg,#10a37f,#34d399);border-radius:2px;"></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            follow_up = client.chat(messages, model=model, user_id=user_id)
-            follow_content = follow_up.get("content") or ""
-            
-            if not follow_up.get("tool_calls"):
-                messages.append({"role": "assistant", "content": follow_content or "Task complete."})
+                """, unsafe_allow_html=True)
+                
+                follow_up = client.chat(messages, model=model, user_id=user_id)
+                follow_content = follow_up.get("content") or ""
+                
                 if follow_content:
+                    messages.append({"role": "assistant", "content": follow_content})
                     traces.append({
                         "step": step + 0.5,
                         "thought": follow_content[:200],
                         "tool_calls": [],
                         "provider": follow_up.get("provider", provider)
                     })
-                return {"content": follow_content or "Task completed.", "traces": traces}
-            else:
-                messages.append({"role": "assistant", "content": follow_content or "Continuing..."})
-        else:
-            trace["response"] = content
-            traces.append(trace)
+                    
+                    progress_placeholder.markdown(f"""
+                    <div class="agent-progress-container">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span>✅</span>
+                            <span>Step {step} complete</span>
+                        </div>
+                        <div style="font-size:13px;color:#333;margin-top:8px;">
+                            {follow_content[:300]}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    return {"content": follow_content, "traces": traces}
+        
+        except Exception as e:
+            error_msg = f"Agent error at step {step}: {str(e)}"
             progress_placeholder.markdown(f"""
             <div class="agent-progress-container">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                    <span>✓</span>
-                    <span>Complete</span>
-                </div>
-                <div style="height:4px;background:#f0f0f0;border-radius:2px;overflow:hidden;">
-                    <div style="height:100%;width:100%;background:#10a37f;border-radius:2px;"></div>
-                </div>
+                <div style="color:#ef4444;">❌ {error_msg}</div>
             </div>
             """, unsafe_allow_html=True)
-            return {"content": content or "Task completed.", "traces": traces}
+            return {"content": error_msg, "traces": traces}
     
-    final_content = traces[-1].get("response", "") if traces else ""
-    if not final_content:
-        final_content = "Maximum steps reached.\n\n" + "\n".join([f"Step {t['step']}: {t['thought']}" for t in traces])
+    final_content = "Maximum steps reached. Here's the progress:\n\n" + \
+                    "\n".join([f"Step {t['step']}: {t.get('thought', 'Done')}" for t in traces])
     
     return {"content": final_content, "traces": traces}
 
@@ -543,7 +753,6 @@ def show_user_menu():
         
         st.divider()
         
-        # Advanced settings
         with st.expander("⚙️ Advanced Settings"):
             st.session_state.cache_enabled = st.toggle("Response Cache", value=st.session_state.cache_enabled)
             st.session_state.memory_enabled = st.toggle("Memory System", value=st.session_state.memory_enabled)
@@ -560,7 +769,6 @@ def show_user_menu():
                 client.clear_memory(st.session_state.current_user["username"])
                 st.success("Memory cleared!")
         
-        # Cache stats
         try:
             client = get_enhanced_client()
             cache_stats = client.get_cache_stats()
@@ -626,9 +834,6 @@ def show_settings():
             client = get_enhanced_client()
             client.clear_memory(st.session_state.current_user["username"])
             st.success("Working memory cleared!")
-        
-        if st.button("View Memory Stats", type="secondary"):
-            st.info("Memory stats will appear here after some conversations.")
     
     with tab4:
         st.markdown("### Delete Account")
@@ -662,7 +867,7 @@ def show_sidebar():
         st.markdown("""
         <div style="border-bottom: 1px solid #222; padding-bottom: 12px; margin-bottom: 12px;">
             <h1 style="font-size: 16px; margin: 0; color: #fff; font-weight: 700;">DenLab Chat</h1>
-            <p style="font-size: 11px; color: #666; margin: 4px 0 0 0;">Enhanced AI with Memory</p>
+            <p style="font-size: 11px; color: #666; margin: 4px 0 0 0;">Enhanced AI with Memory & GitHub Tools</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -699,7 +904,7 @@ def show_sidebar():
             st.session_state.agent_mode = agent_mode
         
         if st.session_state.agent_mode:
-            st.caption("Autonomous tool-use enabled")
+            st.caption("Autonomous tool-use enabled • GitHub API ready")
         
         st.divider()
         
@@ -741,7 +946,7 @@ def show_sidebar():
                 st.download_button("Download", export_data, f"denlab_{title.replace(' ', '_')}.md", use_container_width=True)
         
         st.divider()
-        st.caption("🧠 Memory enabled • ⚡ Cache enabled")
+        st.caption("🧠 Memory • ⚡ Cache • 🐙 GitHub")
 
 
 # ============ MESSAGE ACTIONS ============
@@ -763,7 +968,8 @@ def render_message_actions(msg_idx: int, content: str, msg_type: str = "text"):
     
     with cols[2]:
         if st.button("🔄", key=f"act_regen_{msg_idx}", help="Regenerate"):
-            st.session_state.messages = st.session_state.messages[:msg_idx]
+            if "messages" in st.session_state:
+                st.session_state.messages = st.session_state.messages[:msg_idx]
             st.rerun()
     
     with cols[3]:
@@ -822,7 +1028,7 @@ conv_id = ensure_conversation()
 show_sidebar()
 
 # File upload
-st.file_uploader(
+uploaded = st.file_uploader(
     "Attach file",
     type=["txt", "py", "js", "ts", "html", "css", "json", "md", "csv", "xml", "yaml", "yml",
           "sh", "bash", "c", "cpp", "h", "hpp", "java", "kt", "swift", "rs", "go", "rb", "php", "sql",
@@ -833,6 +1039,12 @@ st.file_uploader(
 )
 
 # Handle file upload
+if uploaded and not st.session_state.processing_upload:
+    st.session_state.pending_upload = uploaded
+    st.session_state.processing_upload = True
+    st.session_state.uploader_key = str(int(st.session_state.uploader_key) + 1)
+    st.rerun()
+
 if st.session_state.get("pending_upload") and st.session_state.get("processing_upload"):
     fobj = st.session_state.pending_upload
     fname = fobj.name
@@ -874,16 +1086,17 @@ if not visible_messages:
     <div style="text-align:center;padding:80px 20px 40px;">
         <div style="font-size:36px;margin-bottom:16px;">🧠</div>
         <div style="font-size:22px;font-weight:700;color:#111;margin-bottom:8px;">DenLab Chat</div>
-        <div style="font-size:13px;color:#888;margin-bottom:40px;">Enhanced AI with Memory & Tools</div>
+        <div style="font-size:13px;color:#888;margin-bottom:40px;">Enhanced AI with Memory, GitHub Tools & Agent Mode</div>
         <div style="font-size:13px;color:#666;line-height:2.2;">
             <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/imagine</code> — Generate images</div>
             <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/research</code> — Deep web research</div>
             <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/code</code> — Generate & execute Python</div>
             <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/analyze</code> — Analyze uploaded files</div>
             <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/audio</code> — Text to speech</div>
+            <div><code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;font-size:12px;color:#10a37f;">/agent</code> — Autonomous task execution</div>
         </div>
         <div style="margin-top:40px;font-size:11px;color:#aaa;">
-            🧠 Memory enabled • ⚡ Cache enabled • 🤖 Agent mode available
+            🧠 Memory • ⚡ Cache • 🤖 Agent • 🐙 GitHub API
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -915,9 +1128,11 @@ for idx, msg in enumerate(messages):
             if meta.get("traces"):
                 with st.expander("Execution Trace", expanded=False):
                     for t in meta["traces"]:
-                        st.markdown(f"**Step {t['step']}** {'✅' if all(tc.get('status') == 'success' for tc in t.get('tool_calls', [])) else '🔄'}")
+                        status_icon = "✅" if all(tc.get("status") == "success" for tc in t.get("tool_calls", [])) else "🔄"
+                        st.markdown(f"**Step {t['step']}** {status_icon}")
                         for tc in t.get("tool_calls", []):
-                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{'✅' if tc.get('status') == 'success' else '❌'} `{tc.get('name')}` ({tc.get('duration_ms', 0):.0f}ms)")
+                            tc_icon = "✅" if tc.get("status") == "success" else "❌"
+                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{tc_icon} `{tc.get('name')}` ({tc.get('duration_ms', 0):.0f}ms)")
         else:
             st.markdown(content)
         
@@ -948,6 +1163,11 @@ if prompt := st.chat_input(placeholder):
                     client = get_enhanced_client()
                     url = client.generate_image(desc, w, h)
                     st.image(url, caption=desc, use_container_width=True)
+                    try:
+                        img_data = requests.get(url, timeout=15).content
+                        st.download_button("⬇️ Download", img_data, f"image_{desc[:20].replace(' ', '_')}.png", mime="image/png")
+                    except:
+                        pass
             
             db.add_message(conv_id, "assistant", url, {"type": "image"})
             st.rerun()
@@ -984,7 +1204,7 @@ if prompt := st.chat_input(placeholder):
                     client = get_enhanced_client()
                     code_prompt = f"Write Python to: {task}\nReturn ONLY the code inside a markdown code block."
                     resp = client.chat([
-                        {"role": "system", "content": "Expert Python programmer."},
+                        {"role": "system", "content": "Expert Python programmer. Return only code in markdown blocks."},
                         {"role": "user", "content": code_prompt}
                     ], model=st.session_state.selected_model, user_id=st.session_state.current_user["username"])
                     
@@ -1020,8 +1240,8 @@ if prompt := st.chat_input(placeholder):
                     if lf["type"] == "text":
                         client = get_enhanced_client()
                         analysis = client.chat([
-                            {"role": "system", "content": "Senior code reviewer."},
-                            {"role": "user", "content": f"Analyze: {lf['name']}\n```\n{lf['content'][:4000]}\n```"}
+                            {"role": "system", "content": "Senior code reviewer and software architect."},
+                            {"role": "user", "content": f"Analyze: {lf['name']}\n```\n{lf['content'][:4000]}\n```\n\nProvide: Purpose, Structure, Dependencies, Quality, Issues, Documentation."}
                         ], model=st.session_state.selected_model, user_id=st.session_state.current_user["username"])
                         analysis_text = analysis.get("content", "Analysis failed.")
                         st.markdown(analysis_text)
@@ -1038,7 +1258,7 @@ if prompt := st.chat_input(placeholder):
             st.rerun()
         else:
             db.add_message(conv_id, "user", "🔍 /analyze")
-            db.add_message(conv_id, "assistant", "No file uploaded.")
+            db.add_message(conv_id, "assistant", "No file uploaded. Please upload a file first.")
             st.rerun()
     
     # /audio
@@ -1051,6 +1271,7 @@ if prompt := st.chat_input(placeholder):
                     client = get_enhanced_client()
                     url = client.generate_audio(text)
                     st.audio(url, format='audio/mp3')
+                    st.caption(f"Text-to-speech: {text[:100]}...")
             db.add_message(conv_id, "assistant", url, {"type": "audio"})
             st.rerun()
     
@@ -1070,14 +1291,16 @@ if prompt := st.chat_input(placeholder):
                 if response:
                     st.markdown(response)
                 else:
-                    st.markdown("The agent completed but returned no output.")
+                    st.markdown("The agent completed but returned no output. The AI service may be temporarily unavailable.")
                 
                 if traces:
-                    with st.expander("Execution Trace", expanded=False):
+                    with st.expander("📋 Execution Trace", expanded=False):
                         for t in traces:
-                            st.markdown(f"**Step {t['step']}** {'✅' if all(tc.get('status') == 'success' for tc in t.get('tool_calls', [])) else '🔄'}")
+                            status_icon = "✅" if all(tc.get("status") == "success" for tc in t.get("tool_calls", [])) else "🔄"
+                            st.markdown(f"**Step {t['step']}** {status_icon}")
                             for tc in t.get("tool_calls", []):
-                                st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{'✅' if tc.get('status') == 'success' else '❌'} `{tc.get('name')}` ({tc.get('duration_ms', 0):.0f}ms)")
+                                tc_icon = "✅" if tc.get("status") == "success" else "❌"
+                                st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{tc_icon} `{tc.get('name')}` ({tc.get('duration_ms', 0):.0f}ms)")
                 
                 db.add_message(conv_id, "assistant", response, {"type": "agent_trace", "traces": traces})
                 st.rerun()
@@ -1098,12 +1321,15 @@ if prompt := st.chat_input(placeholder):
             
             # Auto-route complex queries
             if st.session_state.auto_route:
-                route_result = client.route_query(prompt, ["web_search", "execute_code", "read_file", "fetch_url", "analyze_image"])
-                if route_result["needs_agent"] and route_result["confidence"] > 0.7:
-                    st.info(f"🔄 Detected intent: {route_result['primary_intent']}. Switching to agent mode...")
-                    st.session_state.agent_mode = True
-                    time.sleep(0.5)
-                    st.rerun()
+                try:
+                    route_result = client.route_query(prompt, ["web_search", "github_get_files", "execute_code", "read_file", "fetch_url", "analyze_image"])
+                    if route_result.get("needs_agent", False) and route_result.get("confidence", 0) > 0.7:
+                        st.info(f"🔄 Detected intent: {route_result['primary_intent']}. Switching to agent mode for better results...")
+                        st.session_state.agent_mode = True
+                        time.sleep(0.5)
+                        st.rerun()
+                except:
+                    pass  # Fall through to normal chat
             
             api_msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
             for m in messages:
@@ -1120,11 +1346,13 @@ if prompt := st.chat_input(placeholder):
                 result = client.chat(api_msgs, model=st.session_state.selected_model, stream=True, on_chunk=on_chunk, user_id=st.session_state.current_user["username"])
                 text = result.get("content", "")
                 
-                # Show memory indicator if context was used
-                if st.session_state.show_memory_context and result.get("provider") == "cache":
-                    st.caption("⚡ Response from cache")
-                elif st.session_state.show_memory_context:
-                    st.caption("🧠 Generated with memory")
+                if st.session_state.show_memory_context:
+                    if result.get("provider") == "cache":
+                        st.caption("⚡ Response from cache")
+                    elif result.get("cached"):
+                        st.caption("📦 Cached response")
+                    else:
+                        st.caption("🧠 Generated with memory")
                 
                 if not text or not text.strip():
                     result2 = client.chat(api_msgs, model=st.session_state.selected_model, stream=False, user_id=st.session_state.current_user["username"])
@@ -1134,12 +1362,12 @@ if prompt := st.chat_input(placeholder):
                     ph.markdown(text)
                     response = text
                 else:
-                    ph.markdown("I received an empty response. Please try again.")
+                    ph.markdown("I received an empty response. Please try again or switch to a different model.")
                     response = "Empty response from API."
                     
             except Exception as e:
-                ph.markdown(f"Error: {e}")
-                response = f"Error: {e}"
+                ph.markdown(f"Error: {str(e)}")
+                response = f"Error: {str(e)}"
         
         db.add_message(conv_id, "assistant", response)
         st.rerun()
