@@ -77,11 +77,7 @@ class CommandHandler:
         return None
     
     def _handle_imagine(self, prompt: str) -> str:
-        """
-        Handle /imagine command.
-        Generates image, stores in database, returns special marker.
-        NO direct rendering - let _render_messages handle display.
-        """
+        """Handle /imagine command."""
         desc = prompt[8:].strip()
         if not desc:
             return "Please provide an image description.\n\nExample: `/imagine a cat sitting on a mat`"
@@ -95,14 +91,13 @@ class CommandHandler:
                 width, height = AspectRatios.RATIOS[ratio]
             desc = re.sub(r'--ar\s+\d+:\d+', '', desc).strip()
         
-        # Generate image URL
+        # Generate image
         url = self.client.generate_image(desc, width, height)
         
-        # Store in database - will be rendered on next rerun
+        # Store in database
         self.db.add_message(self.conv_id, "assistant", url, {"type": "image"})
         
-        # Return special marker - no direct display
-        return "__IMAGE_STORED__"
+        return url
     
     def _handle_research(self, prompt: str) -> str:
         """Handle /research command."""
@@ -110,28 +105,16 @@ class CommandHandler:
         if not topic:
             return "Please provide a research topic.\n\nExample: `/research artificial intelligence`"
         
-        # Perform research using deep_research for better results
+        # Perform research
         result = deep_research(topic, depth=2)
         data = json.loads(result)
         
         if not data.get("success"):
-            # Fallback to simple web search
-            fallback = web_search(topic)
-            fb_data = json.loads(fallback)
-            if fb_data.get("success"):
-                output = f"## Research: {topic}\n\n"
-                output += f"**Results found:** {len(fb_data.get('results', []))}\n\n"
-                for i, item in enumerate(fb_data.get('results', [])[:5], 1):
-                    output += f"### {i}. {item.get('title', 'Untitled')}\n"
-                    output += f"**Source:** {item.get('url', 'Unknown')}\n\n"
-                    output += f"{item.get('snippet', 'No content')}\n\n"
-                return output
             return f"Research failed: {data.get('error', 'Unknown error')}"
         
         # Format output
         output = f"## Research: {data['topic']}\n\n"
-        output += f"**Sources found:** {data['total_sources']}\n"
-        output += f"**Findings:** {data['total_findings']}\n\n"
+        output += f"**Sources found:** {data['total_sources']}\n\n"
         
         for i, finding in enumerate(data.get('findings', [])[:5], 1):
             output += f"### {i}. {finding.get('title', 'Untitled')}\n"
@@ -239,7 +222,16 @@ Provide a structured analysis covering:
 # ============================================================================
 
 class ChatInterface:
-    """Main chat interface component."""
+    """
+    Main chat interface component.
+    
+    Handles:
+    - Displaying messages
+    - Processing user input
+    - Command handling
+    - Agent mode execution (Standard and Swarm)
+    - Auto-routing for complex queries
+    """
     
     def __init__(self):
         self.client = get_client()
@@ -251,7 +243,16 @@ class ChatInterface:
     # ========================================================================
     
     def render(self, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
-        """Render the chat interface."""
+        """
+        Render the chat interface.
+        
+        Args:
+            db: ChatDatabase instance
+            conv_id: Current conversation ID
+            model: Selected model
+            user_id: Current user ID
+            messages: List of messages to display
+        """
         # Initialize command handler
         self.command_handler = CommandHandler(db, conv_id, model, user_id)
         
@@ -283,6 +284,7 @@ class ChatInterface:
     
     def _render_single_message(self, content: str, msg_type: str, meta: Dict, idx: int):
         """Render a single message based on its type."""
+        
         if msg_type == "image":
             st.image(content, use_container_width=True)
             # Add download button for image
@@ -317,21 +319,13 @@ class ChatInterface:
             st.markdown(content)
             traces = meta.get("traces", [])
             if traces and should_show_traces():
-                with st.expander("📋 Execution Details", expanded=False):
-                    for t in traces:
-                        st.markdown(f"**Step {t.get('step', '?')}**")
-                        for tc in t.get("tool_calls", []):
-                            icon = "✅" if tc.get("status") == "success" else "❌" if tc.get("status") == "error" else "🔄"
-                            st.markdown(f"&nbsp;&nbsp;{icon} `{tc.get('name')}` ({tc.get('duration_ms', 0):.0f}ms)")
+                render_trace(traces, expanded=False)
         
         elif msg_type == "swarm":
             st.markdown(content)
             swarm_results = meta.get("swarm_results", {})
             if swarm_results:
-                with st.expander("🐝 Swarm Details", expanded=False):
-                    for agent, result in swarm_results.items():
-                        st.markdown(f"**{agent.upper()} Agent**")
-                        st.markdown(f"{result[:300]}...")
+                render_swarm_status(swarm_results, expanded=False)
         
         elif msg_type == "audio":
             st.audio(content, format='audio/mp3')
@@ -339,7 +333,7 @@ class ChatInterface:
         else:
             st.markdown(content)
         
-        # Add action buttons for assistant messages (not for images/audio)
+        # Add action buttons for assistant messages
         if idx > 0 and msg_type not in ["image", "audio"]:
             render_message_actions(idx, content, msg_type)
     
@@ -353,48 +347,45 @@ class ChatInterface:
     
     def _handle_input(self, prompt: str, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
         """Process user input and generate response."""
+        
         # Save user message
         db.add_message(conv_id, "user", prompt)
         
         # Check for commands
         cmd_result = self.command_handler.handle(prompt)
         
-        # Handle IMAGE_STORED marker (no direct display, just rerun)
-        if cmd_result == "__IMAGE_STORED__":
-            st.rerun()
-        
-        # Handle AGENT_MODE flag
-        elif cmd_result == "AGENT_MODE":
+        if cmd_result == "AGENT_MODE":
+            # Enter agent mode
             st.session_state.agent_mode = True
             st.rerun()
         
-        # Handle image/audio URLs (store and rerun, don't display directly)
-        elif cmd_result and isinstance(cmd_result, str) and cmd_result.startswith("http"):
-            if "image.pollinations" in cmd_result:
-                db.add_message(conv_id, "assistant", cmd_result, {"type": "image"})
-            elif "gen.pollinations" in cmd_result:
-                db.add_message(conv_id, "assistant", cmd_result, {"type": "audio"})
-            else:
-                db.add_message(conv_id, "assistant", cmd_result)
-            st.rerun()
-        
-        # Handle text response from commands
         elif cmd_result is not None:
+            # Command handled, display response
             with st.chat_message("assistant"):
-                st.markdown(cmd_result)
-            db.add_message(conv_id, "assistant", cmd_result)
+                if cmd_result.startswith("http") and ("image.pollinations" in cmd_result or "gen.pollinations" in cmd_result):
+                    # Image or audio URL
+                    if "image.pollinations" in cmd_result:
+                        st.image(cmd_result, use_container_width=True)
+                        db.add_message(conv_id, "assistant", cmd_result, {"type": "image"})
+                    else:
+                        st.audio(cmd_result, format='audio/mp3')
+                        db.add_message(conv_id, "assistant", cmd_result, {"type": "audio"})
+                else:
+                    st.markdown(cmd_result)
+                    db.add_message(conv_id, "assistant", cmd_result)
             st.rerun()
         
-        # Agent Mode (Standard or Swarm)
         elif st.session_state.get("agent_mode", False):
+            # Agent mode (Standard or Swarm)
             self._handle_agent_mode(prompt, db, conv_id, model, user_id)
         
-        # Normal Chat with Auto-Routing
         else:
+            # Normal chat with auto-routing
             self._handle_normal_chat(prompt, db, conv_id, model, user_id, messages)
     
     def _handle_agent_mode(self, prompt: str, db, conv_id: str, model: str, user_id: str):
         """Handle agent mode execution (Standard or Swarm)."""
+        
         with st.chat_message("assistant"):
             progress_placeholder = st.empty()
             
@@ -402,6 +393,8 @@ class ChatInterface:
                 if st.session_state.get("swarm_mode", False):
                     # Swarm mode
                     render_status_message("🐝 Swarm mode activated. Decomposing task...", "info")
+                    
+                    # Show thinking indicator
                     progress_placeholder.markdown("🔄 **Master Agent** is planning the task...")
                     
                     # Execute swarm (sync wrapper)
@@ -409,6 +402,7 @@ class ChatInterface:
                     
                     progress_placeholder.empty()
                     st.markdown(result)
+                    
                     db.add_message(conv_id, "assistant", result, {"type": "swarm"})
                 
                 else:
@@ -426,6 +420,7 @@ class ChatInterface:
                     agent.on_step = on_step
                     
                     # Run agent (async)
+                    import asyncio
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
@@ -453,6 +448,7 @@ class ChatInterface:
     
     def _handle_normal_chat(self, prompt: str, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
         """Handle normal chat with auto-routing."""
+        
         with st.chat_message("assistant"):
             ph = st.empty()
             
@@ -492,12 +488,11 @@ class ChatInterface:
                 )
                 response = result.get("content", "")
                 
-                # If streaming returned empty, try non-streaming
                 if not response or not response.strip():
+                    # Retry without streaming
                     result2 = self.client.chat(api_messages, model=model, stream=False, user_id=user_id)
                     response = result2.get("content", "")
                 
-                # Display and store response
                 if response and response.strip():
                     ph.markdown(response)
                 else:
