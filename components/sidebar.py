@@ -35,6 +35,7 @@ class Sidebar:
     - Export chat functionality
     - Settings button
     - Sign out button
+    - Advanced settings expander
     """
     
     def __init__(self):
@@ -50,6 +51,9 @@ class Sidebar:
         
         Returns:
             Tuple of (selected_model, agent_mode, swarm_mode)
+            - selected_model: API model name (e.g., "openai", "claude")
+            - agent_mode: Whether agent mode is enabled
+            - swarm_mode: Whether swarm mode is enabled (only if agent_mode)
         """
         user = st.session_state.get("current_user")
         if not user:
@@ -145,10 +149,13 @@ class Sidebar:
                 for key in ['user_token', 'current_user', 'current_conversation_id', 
                            'is_developer', 'show_settings', 'agent_mode', 'swarm_mode']:
                     if key in st.session_state:
-                        if key in ['agent_mode', 'swarm_mode', 'show_settings']:
+                        st.session_state[key] = None if key in ['agent_mode', 'swarm_mode', 'show_settings'] else False
+                        if key == 'agent_mode':
                             st.session_state[key] = False
-                        else:
-                            st.session_state[key] = None
+                        elif key == 'swarm_mode':
+                            st.session_state[key] = False
+                        elif key == 'show_settings':
+                            st.session_state[key] = False
                 
                 st.rerun()
     
@@ -422,7 +429,12 @@ class AdvancedSettings:
 # ============================================================================
 
 def render_sidebar() -> Tuple[str, bool, bool]:
-    """Convenience function to render the sidebar."""
+    """
+    Convenience function to render the sidebar.
+    
+    Returns:
+        Tuple of (selected_model, agent_mode, swarm_mode)
+    """
     sidebar = Sidebar()
     return sidebar.render()
 
@@ -434,7 +446,12 @@ def render_advanced_settings():
 
 
 def get_sidebar_state() -> Dict[str, Any]:
-    """Get current sidebar-related state values."""
+    """
+    Get current sidebar-related state values.
+    
+    Returns:
+        Dictionary with current settings
+    """
     return {
         "agent_mode": st.session_state.get("agent_mode", False),
         "swarm_mode": st.session_state.get("swarm_mode", False),
