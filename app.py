@@ -32,7 +32,12 @@ st.set_page_config(
         'About': 'DenLab Chat - Advanced AI Assistant with Memory & Tools'
     }
 )
-
+# Add after st.set_page_config
+st.markdown("""
+<script>
+    window.parent.document.querySelector('[data-testid="stSidebar"]').style.marginLeft = '0px';
+</script>
+""", unsafe_allow_html=True)
 # ============ SAFE SYSTEM PROMPT ============
 SYSTEM_PROMPT = """You are DenLab, an advanced AI research assistant with tool-use capabilities and persistent memory.
 
