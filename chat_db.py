@@ -310,3 +310,10 @@ def delete_user_chat_data(username: str) -> bool:
         return True
     
     return False
+
+
+# ============================================================================
+# BACKWARD COMPATIBILITY ALIAS
+# ============================================================================
+
+ConversationDB = ChatDatabase
