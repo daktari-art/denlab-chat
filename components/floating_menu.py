@@ -37,51 +37,54 @@ class FloatingMenu:
     # ========================================================================
     # Main Render
     # ========================================================================
-    
+
     def render(self) -> Tuple[str, bool, bool]:
-    user = st.session_state.get("current_user")
-    if not user:
-        return "openai", False, False
-    
-    # Inject CSS to fix the menu button
-    st.markdown("""
-    <style>
-    .menu-fixed-bar {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        z-index: 2000 !important;
-        background: #0d0d0d !important;
-        padding: 8px 16px !important;
-        border-bottom: 1px solid #1a1a1a !important;
-    }
-    .main .block-container {
-        padding-top: 60px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Fixed menu bar
-    st.markdown('<div class="menu-fixed-bar">', unsafe_allow_html=True)
-    col_menu, col_title, col_spacer = st.columns([0.08, 0.84, 0.08])
-    with col_menu:
-        if st.button("☰", key="menu_hamburger", help="Open Menu"):
-            st.session_state[self.MENU_OPEN_KEY] = not st.session_state[self.MENU_OPEN_KEY]
-            st.rerun()
-    with col_title:
-        st.caption(f"🤖 {st.session_state.get('selected_model', 'pollinations')} | {'🐝 Swarm' if st.session_state.get('swarm_mode') else '🤖 Agent' if st.session_state.get('agent_mode') else '💬 Chat'}")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Show drawer if open
-    if st.session_state[self.MENU_OPEN_KEY]:
-        self._render_drawer(user)
-    
-    return (
-        st.session_state.get("selected_model", "openai"),
-        st.session_state.get("agent_mode", False),
-        st.session_state.get("swarm_mode", False)
-    )
+        """
+        Render the menu button and drawer.
+        """
+        user = st.session_state.get("current_user")
+        if not user:
+            return "openai", False, False
+        
+        # Inject CSS to fix the menu button
+        st.markdown("""
+        <style>
+        .menu-fixed-bar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 2000 !important;
+            background: #0d0d0d !important;
+            padding: 8px 16px !important;
+            border-bottom: 1px solid #1a1a1a !important;
+        }
+        .main .block-container {
+            padding-top: 60px !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Fixed menu bar
+        st.markdown('<div class="menu-fixed-bar">', unsafe_allow_html=True)
+        col_menu, col_title, col_spacer = st.columns([0.08, 0.84, 0.08])
+        with col_menu:
+            if st.button("☰", key="menu_hamburger", help="Open Menu"):
+                st.session_state[self.MENU_OPEN_KEY] = not st.session_state[self.MENU_OPEN_KEY]
+                st.rerun()
+        with col_title:
+            st.caption(f"🤖 {st.session_state.get('selected_model', 'pollinations')} | {'🐝 Swarm' if st.session_state.get('swarm_mode') else '🤖 Agent' if st.session_state.get('agent_mode') else '💬 Chat'}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Show drawer if open
+        if st.session_state[self.MENU_OPEN_KEY]:
+            self._render_drawer(user)
+        
+        return (
+            st.session_state.get("selected_model", "openai"),
+            st.session_state.get("agent_mode", False),
+            st.session_state.get("swarm_mode", False)
+        )
     
     # ========================================================================
     # Drawer
