@@ -36,6 +36,7 @@ from auth import get_auth_manager
 from chat_db import get_chat_db
 from client import get_client
 from backend import get_tools_metadata
+from typing import Optional
 
 # Try to import advanced components with fallbacks
 try:
