@@ -116,6 +116,7 @@ class AuthManager:
         self._sessions = self._load_sessions()
         self._hasher = PasswordHasher()
         self._token_manager = TokenManager()
+        self._auto_login_developer = DeveloperConfig.AUTO_LOGIN
     
     # ========================================================================
     # Public API
