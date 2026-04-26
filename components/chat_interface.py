@@ -1,6 +1,6 @@
 """
 Chat Interface with Upload Integration.
-Uses fixed positioning for input and menu so they don't scroll away.
+Fixed input area at viewport bottom, developer-aware, image generation support.
 """
 
 import streamlit as st
@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Any
 import os
 import asyncio
 import json
+import requests
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,12 +38,6 @@ except:
     ROUTER_AVAILABLE = False
 
 try:
-    from features.vision import VisionAnalyzer
-    VISION_AVAILABLE = True
-except:
-    VISION_AVAILABLE = False
-
-try:
     from features.memory import get_memory
     MEMORY_AVAILABLE = True
 except:
@@ -50,7 +45,7 @@ except:
 
 
 class ChatInterface:
-    """Main chat interface with fixed input area."""
+    """Main chat interface with fixed input and all features."""
     
     def __init__(self, db: ConversationDB, conversation_id: str,
                  model: str = "openai", agent_mode: bool = False,
@@ -61,9 +56,9 @@ class ChatInterface:
         self.agent_mode = agent_mode
         self.swarm_mode = swarm_mode
         self.client = get_client()
-        self._init_session_upload()
+        self._init_session()
     
-    def _init_session_upload(self):
+    def _init_session(self):
         if "uploaded_files" not in st.session_state:
             st.session_state.uploaded_files = []
         if "uploaded_file_data" not in st.session_state:
@@ -77,54 +72,21 @@ class ChatInterface:
     
     def render(self):
         """Render the complete chat interface."""
-        # Inject CSS for fixed input and proper scrolling
-        st.markdown("""
-        <style>
-        /* Fixed input container at bottom of viewport */
-        .fixed-bottom {
-            position: fixed !important;
-            bottom: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
-            background: #0d0d0d !important;
-            z-index: 1000 !important;
-            padding: 12px 20px 20px 20px !important;
-            border-top: 1px solid #1a1a1a !important;
-        }
-        /* Add bottom padding to main content so chat doesn't hide behind fixed input */
-        .main .block-container {
-            padding-bottom: 200px !important;
-        }
-        /* Text area styling */
-        div[data-testid="stTextArea"] textarea {
-            border-radius: 8px !important;
-            min-height: 60px !important;
-            max-height: 150px !important;
-            padding: 10px 12px !important;
-            background: #1a1a1a !important;
-            color: #e0e0e0 !important;
-            border: 1px solid #333 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
         
         # Status bar
         self._render_status_bar()
         
-        # Chat history
+        st.divider()
+        
+        # Chat history in scrollable area
         self._render_chat_history()
         
-        # Spacer to push content above fixed input
-        st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-        
-        # Fixed input area at bottom
-        st.markdown('<div class="fixed-bottom">', unsafe_allow_html=True)
-        self._render_input_area()
-        st.markdown('</div>', unsafe_allow_html=True)
+        # Fixed input at bottom of viewport
+        self._render_fixed_input()
     
     def _render_status_bar(self):
         """Render model/agent status indicators."""
-        cols = st.columns([0.3, 0.25, 0.25, 0.2])
+        cols = st.columns([0.35, 0.25, 0.25, 0.15])
         with cols[0]:
             st.caption(f"🤖 **{self.model}**")
         with cols[1]:
@@ -144,6 +106,9 @@ class ChatInterface:
         """Render chat messages."""
         messages = self.db.get_messages(self.conversation_id)
         
+        if not messages:
+            st.info("Start a conversation! Try `/imagine a sunset over mountains` or just say hello.")
+        
         for msg in messages:
             role = msg["role"]
             content = msg.get("content", "")
@@ -153,22 +118,66 @@ class ChatInterface:
                     st.markdown(content)
             elif role == "assistant":
                 with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown(content)
+                    st.markdown(content, unsafe_allow_html=True)
     
-    def _render_input_area(self):
-        """Render the input area with upload and send."""
-        # Use a counter-based key so it resets after sending
+    def _render_fixed_input(self):
+        """Render input area fixed at the bottom of the viewport."""
+        
+        # Inject CSS to fix input at bottom and give chat area breathing room
+        st.markdown("""
+        <style>
+        /* Create space at the bottom of the main container so chat doesn't hide behind input */
+        .main .block-container {
+            padding-bottom: 200px !important;
+        }
+        
+        /* Style for the fixed input container */
+        .fixed-input-container {
+            position: fixed !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            background: #0d0d0d !important;
+            z-index: 9999 !important;
+            padding: 12px 24px 24px 24px !important;
+            border-top: 1px solid #1a1a1a !important;
+        }
+        
+        /* Make text area visible */
+        div[data-testid="stTextArea"] textarea {
+            background: #1a1a1a !important;
+            color: #e0e0e0 !important;
+            border: 1px solid #333 !important;
+            border-radius: 8px !important;
+            min-height: 55px !important;
+            max-height: 120px !important;
+            font-size: 14px !important;
+        }
+        
+        /* Make file uploader less obtrusive */
+        div[data-testid="stFileUploader"] {
+            max-width: 50px !important;
+        }
+        div[data-testid="stFileUploader"] section {
+            padding: 4px !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Fixed input container
+        st.markdown('<div class="fixed-input-container">', unsafe_allow_html=True)
+        
         msg_count = st.session_state.get("message_counter", 0)
         
         user_input = st.text_area(
             "Message",
             key=f"chat_input_{self.conversation_id}_{msg_count}",
-            height=68,
-            placeholder="Type your message...",
+            height=55,
+            placeholder="Type a message... (Use /imagine for images, /agent for agent mode)",
             label_visibility="collapsed"
         )
         
-        col_upload, col_spacer, col_send = st.columns([0.1, 0.7, 0.2])
+        col_upload, col_spacer, col_send = st.columns([0.08, 0.72, 0.20])
         
         with col_upload:
             uploaded = st.file_uploader(
@@ -192,42 +201,61 @@ class ChatInterface:
                 key=f"send_btn_{self.conversation_id}_{msg_count}"
             )
         
+        st.markdown('</div>', unsafe_allow_html=True)
+        
         if send_clicked and user_input.strip():
-            # Increment counter to reset the text area on next render
             st.session_state.message_counter += 1
             asyncio.run(self._handle_send(user_input.strip()))
             st.rerun()
     
+    # ========================================================================
+    # SEND HANDLER
+    # ========================================================================
+    
     async def _handle_send(self, user_input: str):
         """Process user message and generate response."""
-        file_attachments = list(st.session_state.get("uploaded_files", []))
-        metadata = {"file_uploads": file_attachments} if file_attachments else None
-        self.db.add_message(self.conversation_id, "user", user_input, metadata=metadata)
         
+        # ---- IMAGE GENERATION ----
+        if user_input.lower().startswith("/imagine") or user_input.lower().startswith("/image"):
+            prompt = user_input.replace("/imagine", "").replace("/image", "").strip()
+            if prompt:
+                self.db.add_message(self.conversation_id, "user", user_input)
+                encoded = requests.utils.quote(prompt)
+                img_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
+                response = f"🖼️ **Generated image for:** *{prompt}*\n\n![Image]({img_url})\n\n[🔗 Open full size]({img_url})"
+                self.db.add_message(self.conversation_id, "assistant", response)
+                return
+        
+        # ---- FILE UPLOADS ----
+        file_attachments = list(st.session_state.get("uploaded_files", []))
         file_context = ""
         for fname in file_attachments:
             fdata = st.session_state.uploaded_file_data.get(fname)
             if fdata:
                 ext = os.path.splitext(fname)[1].lower()
-                if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'] and VISION_AVAILABLE:
+                if ext in ['.txt', '.md', '.py', '.json', '.csv', '.html', '.css', '.js']:
                     try:
-                        vision = VisionAnalyzer()
-                        desc = vision.analyze(fdata)
-                        file_context += f"\n[Image: {fname}]\n{desc}\n"
+                        text = fdata.decode('utf-8')[:3000]
+                        file_context += f"\n\n[File: {fname}]\n```\n{text}\n```\n"
                     except:
-                        pass
-                elif ext in ['.txt', '.md']:
-                    try:
-                        text = fdata.decode('utf-8')[:2000]
-                        file_context += f"\n[Document: {fname}]\n{text}\n"
-                    except:
-                        pass
+                        file_context += f"\n\n[Binary file attached: {fname}]\n"
+                elif ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+                    file_context += f"\n\n[Image attached: {fname}] - User may want you to describe or analyze this.\n"
+                else:
+                    file_context += f"\n\n[File attached: {fname}]\n"
         
+        # Add user message
+        metadata = {"file_uploads": file_attachments} if file_attachments else None
+        self.db.add_message(self.conversation_id, "user", user_input, metadata=metadata)
+        
+        # Clear uploads
         st.session_state.uploaded_files = []
         st.session_state.uploaded_file_data = {}
         
+        # ---- BUILD MESSAGES ----
         messages = self._build_messages(user_input, file_context)
         
+        # ---- GENERATE RESPONSE ----
         with st.spinner("Thinking..." if not self.agent_mode else "Agent working..."):
             try:
                 if self.swarm_mode and KIMI_SWARM_AVAILABLE:
@@ -237,15 +265,24 @@ class ChatInterface:
                 elif self.agent_mode:
                     response = await self._run_standard_agent(user_input, file_context)
                 else:
-                    response = await self._run_chat(messages, file_context)
+                    response = await self._run_chat(messages)
             except Exception as e:
-                response = f"I encountered an error: {str(e)}. Please try again or switch models."
+                response = f"❌ Error: {str(e)}\n\nTry again or use a different mode."
         
         self.db.add_message(self.conversation_id, "assistant", response)
     
     def _build_messages(self, user_input: str, file_context: str = "") -> List[Dict]:
-        messages = [{"role": "system", "content": SystemPrompts.DEFAULT}]
+        """Build message list with proper developer/system prompt."""
         
+        # Use developer prompt if user is developer
+        if st.session_state.get("is_developer"):
+            system_content = SystemPrompts.DEVELOPER
+        else:
+            system_content = SystemPrompts.DEFAULT
+        
+        messages = [{"role": "system", "content": system_content}]
+        
+        # Add memory context if enabled
         if st.session_state.get("memory_enabled") and MEMORY_AVAILABLE:
             try:
                 user = st.session_state.get("current_user", {})
@@ -257,18 +294,22 @@ class ChatInterface:
             except:
                 pass
         
+        # Add recent history
         history = self.db.get_messages(self.conversation_id)
         for msg in history[-6:]:
-            messages.append({"role": msg["role"], "content": msg.get("content", "")})
+            if msg.get("content"):
+                messages.append({"role": msg["role"], "content": msg.get("content", "")})
         
+        # Current input with file context
         full_input = user_input
         if file_context:
-            full_input += f"\n\n--- File Context ---\n{file_context}"
+            full_input += file_context
         
         messages.append({"role": "user", "content": full_input})
         return messages
     
-    async def _run_chat(self, messages: List[Dict], file_context: str = "") -> str:
+    async def _run_chat(self, messages: List[Dict]) -> str:
+        """Standard chat completion."""
         response = self.client.generate(
             messages=messages,
             model=self.model,
@@ -276,37 +317,47 @@ class ChatInterface:
             user_id=st.session_state.get("current_user", {}).get("username"),
             conversation_id=self.conversation_id
         )
-        return response.get("content", "No response generated.")
+        content = response.get("content", "")
+        if not content:
+            content = "I received your message but couldn't generate a response. Please try again."
+        return content
     
     async def _run_standard_agent(self, user_input: str, file_context: str = "") -> str:
-        agent = create_simple_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 15))
-        
-        task = user_input
-        if file_context:
-            task += f"\n\nFile context:\n{file_context}"
-        
-        result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
-        return result
+        """Standard agent execution."""
+        try:
+            agent = create_simple_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 10))
+            task = user_input
+            if file_context:
+                task += f"\n\nFile context:\n{file_context}"
+            result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
+            return result if result else "Agent completed but produced no output. Try a more specific request."
+        except Exception as e:
+            # Fall back to chat if agent fails
+            messages = self._build_messages(user_input, file_context)
+            return await self._run_chat(messages)
     
     async def _run_hermes_agent(self, user_input: str, file_context: str = "") -> str:
-        agent = create_hermes_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 15))
-        
-        task = user_input
-        if file_context:
-            task += f"\n\nFile context:\n{file_context}"
-        
-        result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
-        return result
+        """Hermes agent with self-reflection."""
+        try:
+            agent = create_hermes_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 10))
+            task = user_input
+            if file_context:
+                task += f"\n\nFile context:\n{file_context}"
+            result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
+            return result if result else "Hermes agent completed. Try a more specific request."
+        except Exception as e:
+            messages = self._build_messages(user_input, file_context)
+            return await self._run_chat(messages)
     
     async def _run_kimi_swarm(self, user_input: str, file_context: str = "") -> str:
-        swarm = create_kimi_swarm(
-            model=self.model,
-            max_agents=st.session_state.get("swarm_max_parallel", 4)
-        )
-        
-        task = user_input
-        if file_context:
-            task += f"\n\nFile context:\n{file_context}"
-        
-        result = await swarm.run_swarm(task, user_id=st.session_state.get("current_user", {}).get("username"))
-        return result
+        """Kimi swarm with hierarchical planning."""
+        try:
+            swarm = create_kimi_swarm(model=self.model, max_agents=st.session_state.get("swarm_max_parallel", 4))
+            task = user_input
+            if file_context:
+                task += f"\n\nFile context:\n{file_context}"
+            result = await swarm.run_swarm(task, user_id=st.session_state.get("current_user", {}).get("username"))
+            return result if result else "Swarm completed. Try a more specific request."
+        except Exception as e:
+            messages = self._build_messages(user_input, file_context)
+            return await self._run_chat(messages)
