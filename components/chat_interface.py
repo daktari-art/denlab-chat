@@ -163,9 +163,11 @@ class ChatInterface:
             if role == "user":
                 with st.chat_message("user", avatar="👤"):
                     st.markdown(content)
-                    # Show attachments
-                    if msg.get("file_uploads"):
-                        for fname in msg["file_uploads"]:
+                    # Show attachments from metadata
+                    meta = msg.get("metadata", {})
+                    file_uploads = meta.get("file_uploads", [])
+                    if file_uploads:
+                        for fname in file_uploads:
                             st.caption(f"📎 {fname}")
             elif role == "assistant":
                 with st.chat_message("assistant", avatar="🤖"):
@@ -193,7 +195,6 @@ class ChatInterface:
             <span style="background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:4px 10px;
                 font-size:12px;color:#ccc;display:flex;align-items:center;gap:4px;">
                 {icon} {fname}
-                <span style="cursor:pointer;color:#666;margin-left:4px;" onclick="removeFile('{fname}')">✕</span>
             </span>
             """
         chip_html += "</div>"
@@ -277,9 +278,10 @@ class ChatInterface:
     
     async def _handle_send(self, user_input: str):
         """Process user message and generate response."""
-        # Add user message with file attachments
+        # Add user message with file attachments in metadata
         file_attachments = list(st.session_state.get("uploaded_files", []))
-        self.db.add_message(self.conversation_id, "user", user_input, file_uploads=file_attachments)
+        metadata = {"file_uploads": file_attachments} if file_attachments else None
+        self.db.add_message(self.conversation_id, "user", user_input, metadata=metadata)
         
         # Process uploaded files (vision, audio, docs)
         file_context = ""
@@ -292,7 +294,7 @@ class ChatInterface:
                 if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'] and VISION_AVAILABLE:
                     try:
                         vision = VisionAnalyzer(self.model)
-                        desc = vision.analyze_image(fdata)
+                        desc = vision.analyze(fdata)
                         file_context += f"\n[Image: {fname}]\n{desc}\n"
                     except Exception as e:
                         file_context += f"\n[Image: {fname}] (analysis failed: {e})\n"
