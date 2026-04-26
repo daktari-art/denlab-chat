@@ -31,8 +31,8 @@ Pillow>=10.0.0
 plotly>=5.18.0
 
 # For advanced features (optional)
-# openai>=1.0.0  # Uncomment if using OpenAI directly
-# anthropic>=0.18.0  # Uncomment if using Claude directly
+openai>=1.0.0  # Uncomment if using OpenAI directly
+anthropic>=0.18.0  # Uncomment if using Claude directly
 
 # Additional providers (added during debug)
 duckduckgo-search>=3.9.0
