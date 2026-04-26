@@ -9,7 +9,7 @@ ADVANCEMENTS:
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Enum
 from datetime import datetime
 
 
@@ -105,6 +105,36 @@ class MemoryStats(BaseModel):
     total_semantic_facts: int
     total_episodic_summaries: int
 
+
+
+
+# ============================================================================
+# SESSION MODELS (for session_manager.py compatibility)
+# ============================================================================
+
+class Session(BaseModel):
+    """Chat session data."""
+    id: str
+    name: str = "New Session"
+    messages: List[Dict] = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class MessageRole(str, Enum):
+    """Message role enumeration."""
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class ChatMessage(BaseModel):
+    """Individual chat message."""
+    role: MessageRole
+    content: str
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    metadata: Optional[Dict[str, Any]] = None
 
 # ============================================================================
 # EXPORT
