@@ -8,6 +8,7 @@ ADVANCEMENTS:
 4. Added upload settings (max size, allowed types, processing timeouts)
 5. Added connectivity map showing which files connect to which
 6. Added feature flags for experimental features
+7. Added Pollinations.ai as free default provider (no API key needed)
 """
 
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ class AppConfig:
     - File Analysis & Vision
     - Hierarchical Multi-Agent Swarms (Kimi-style)
     - Self-Reflective Agents (Hermes-style)
+    - Pollinations.ai (Free, no API key required)
     """
 
 
@@ -53,14 +55,16 @@ class AppConfig:
 # ============================================================================
 
 class Models:
+    DEFAULT_MODEL = "openai"
+    
     PROVIDERS: Dict[str, Dict] = {
-    "pollinations": {
+        "pollinations": {
             "display_name": "Pollinations.ai (Free)",
             "api_url": "https://text.pollinations.ai/openai",
             "env_var": "",  # No API key needed
             "models": ["openai", "openai-large"]
-    },
-    "openai": {
+        },
+        "openai": {
             "display_name": "OpenAI",
             "api_url": "https://api.openai.com/v1",
             "env_var": "OPENAI_API_KEY",
@@ -100,7 +104,6 @@ class Models:
     
     MODEL_MAP = {
         "Pollinations (Free)": "pollinations",
-        "Pollinations GPT-4o": "pollinations",
         "OpenAI GPT-4o": "openai",
         "OpenAI GPT-4o Mini": "openai",
         "OpenAI o1-preview": "openai",
@@ -114,9 +117,9 @@ class Models:
         "Cohere Command R": "cohere",
         "Llama 3.1 405B": "meta",
         "Llama 3.1 70B": "meta",
-        "Pollinations Default": "openai",
-        "Pollinations Creative": "openai",
-        "Pollinations Fast": "openai"
+        "Pollinations Default": "pollinations",
+        "Pollinations Creative": "pollinations",
+        "Pollinations Fast": "pollinations"
     }
     
     CAPABILITIES = {
@@ -204,7 +207,7 @@ class HermesConfig:
     enabled: bool = True
     confidence_threshold: float = 0.6
     max_backtracks: int = 3
-    reflection_depth: int = 2  # How many past steps to reflect on
+    reflection_depth: int = 2
     auto_retry_on_low_confidence: bool = True
     verification_prompt_template: str = """Rate the quality of this reasoning and result.
 Confidence (0.0-1.0): ___
@@ -238,10 +241,9 @@ class KimiSwarmConfig:
 class DeveloperConfig:
     USERNAME: str = "Dennis"
     DISPLAY_NAME: str = "Dennis"
-    AUTO_LOGIN: bool = True
-    PASSWORD: str = "Dennis"  # Default password for developer login
+    AUTO_LOGIN: bool = False  # Set to False so login page appears
+    PASSWORD: str = "Dennis"
     
-    # Permissions
     CAN_VIEW_SOURCE: bool = True
     CAN_MODIFY_CONFIG: bool = True
     CAN_MANAGE_USERS: bool = True
@@ -250,7 +252,6 @@ class DeveloperConfig:
     CAN_DEBUG_AGENTS: bool = True
     CAN_RESTART_SYSTEM: bool = True
     
-    # Developer tools
     SHOW_CODE_ON_DEMAND: bool = True
     SHOW_SYSTEM_STATS: bool = True
     SHOW_AGENT_TRACES: bool = True
@@ -270,9 +271,9 @@ class DeveloperConfig:
 class UploadConfig:
     max_file_size_mb: int = 50
     allowed_extensions: List[str] = field(default_factory=lambda: [
-        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',  # Images
-        '.pdf', '.txt', '.md', '.csv', '.json', '.py',      # Documents
-        '.mp3', '.wav', '.m4a', '.ogg',                      # Audio
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
+        '.pdf', '.txt', '.md', '.csv', '.json', '.py',
+        '.mp3', '.wav', '.m4a', '.ogg',
     ])
     max_files_per_message: int = 5
     vision_max_size_mb: int = 20
@@ -282,7 +283,7 @@ class UploadConfig:
 
 
 # ============================================================================
-# CONNECTIVITY MAP (Documentation of file connections)
+# CONNECTIVITY MAP
 # ============================================================================
 
 CONNECTIVITY_MAP = {
@@ -320,13 +321,6 @@ CONNECTIVITY_MAP = {
     "features/cache.py": ["config/settings.py"],
     "features/tool_router.py": ["backend.py", "config/settings.py"],
     "features/vision.py": ["client.py", "config/settings.py"],
-    "features/image_gen.py": ["core/api_client.py", "config/settings.py"],
-    "features/audio_gen.py": ["core/api_client.py", "config/settings.py"],
-    "features/analytics.py": ["chat_db.py", "config/settings.py"],
-    "features/branching.py": ["chat_db.py", "config/settings.py"],
-    "core/api_client.py": ["config/settings.py"],
-    "core/session_manager.py": ["config/models.py"],
-    "ui_components.py": ["config/settings.py", "chat_db.py"]
 }
 
 # ============================================================================
