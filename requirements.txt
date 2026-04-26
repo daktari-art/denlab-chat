@@ -33,3 +33,9 @@ plotly>=5.18.0
 # For advanced features (optional)
 # openai>=1.0.0  # Uncomment if using OpenAI directly
 # anthropic>=0.18.0  # Uncomment if using Claude directly
+
+# Additional providers (added during debug)
+duckduckgo-search>=3.9.0
+google-generativeai>=0.3.0
+mistralai>=0.0.12
+cohere>=4.0.0
