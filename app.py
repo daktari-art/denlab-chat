@@ -149,7 +149,7 @@ auth_manager = get_auth_manager()
 
 # Auto-login developer
 if not st.session_state.current_user and not st.session_state.user_token:
-    if auth_manager._auto_login_developer:
+    if getattr(auth_manager, "_auto_login_developer", False):
         dev_user = auth_manager.login("Dennis", "Dennis")
         if dev_user:
             st.session_state.user_token = dev_user["token"]
