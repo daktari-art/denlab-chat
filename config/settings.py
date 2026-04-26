@@ -11,7 +11,7 @@ ADVANCEMENTS:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, ClassVar
 import os
 
 # ============================================================================
@@ -30,11 +30,11 @@ class AppConfig:
     max_file_size_mb: int = 50
     default_temperature: float = 0.7
     
-    urls: Dict[str, str] = field(default_factory=lambda: {
+    urls: ClassVar[Dict[str, str]] = {
         "github": "https://github.com/daktari-art/denlab-chat",
         "support": "https://github.com/daktari-art/denlab-chat/issues",
         "api": "https://api.openai.com/v1"
-    })
+    }
     
     ABOUT_TEXT: str = """
     DenLab Chat - Advanced AI assistant with:
