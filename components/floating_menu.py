@@ -1,11 +1,10 @@
 """
 Floating Menu Component for DenLab Chat.
-Simple inline menu using Streamlit expander - reliable on all platforms.
+Fixed-position menu using columns — stays visible while chat scrolls independently.
 """
 
 import streamlit as st
-import html as html_module
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Dict
 
 import sys
 import os
@@ -17,7 +16,7 @@ from chat_db import get_chat_db
 
 
 class FloatingMenu:
-    """Simple inline menu using expander - always works."""
+    """Menu that stays fixed at the top of the page."""
     
     def __init__(self):
         self.auth = get_auth_manager()
@@ -27,9 +26,28 @@ class FloatingMenu:
         if not user:
             return "openai", False, False
         
-        # Menu content in an expander
-        with st.expander("☰ Menu", expanded=False):
-            self._render_drawer(user)
+        # Render menu as a top bar with expander
+        with st.container():
+            col_menu, col_info = st.columns([0.1, 0.9])
+            
+            with col_menu:
+                menu_open = st.checkbox("☰", value=False, key="menu_toggle", label_visibility="collapsed")
+                if menu_open:
+                    st.session_state["_menu_expanded"] = True
+                else:
+                    st.session_state["_menu_expanded"] = False
+            
+            with col_info:
+                mode_text = "🐝 Swarm" if st.session_state.get("swarm_mode") else "🤖 Agent" if st.session_state.get("agent_mode") else "💬 Chat"
+                st.caption(f"**{st.session_state.get('selected_model', 'openai').upper()}** | {mode_text}")
+        
+        # Show drawer content if menu is expanded
+        if st.session_state.get("_menu_expanded"):
+            with st.container():
+                self._render_drawer(user)
+                if st.button("✕ Close Menu", key="close_menu_btn"):
+                    st.session_state["_menu_expanded"] = False
+                    st.rerun()
         
         return (
             st.session_state.get("selected_model", "openai"),
@@ -39,42 +57,21 @@ class FloatingMenu:
     
     def _render_drawer(self, user: Dict):
         """Render the menu content."""
-        # User profile
         self._render_user_profile(user)
-        
-        # Action buttons
         self._render_action_buttons()
-        
         st.divider()
-        
-        # Model selection
         selected_model = self._render_model_selector()
-        
         st.divider()
-        
-        # Agent mode selection
         agent_mode, swarm_mode = self._render_agent_selector()
-        
         st.divider()
-        
-        # Conversation list
         self._render_conversation_list(user)
-        
         st.divider()
-        
-        # Export
         self._render_export_button()
+        st.caption(f"{AppConfig.title} v{AppConfig.version}")
         
-        st.divider()
-        
-        # Version footer
-        st.caption(f"{AppConfig.title} v{AppConfig.version} | Memory | Cache | Agent | Swarm")
-        
-        # Developer section
         if st.session_state.get("is_developer"):
             self._render_developer_section()
         
-        # Update session state
         st.session_state.selected_model = selected_model
         st.session_state.agent_mode = agent_mode
         st.session_state.swarm_mode = swarm_mode
@@ -113,8 +110,8 @@ class FloatingMenu:
         with col2:
             if st.button("Sign Out", use_container_width=True, key="fm_signout"):
                 for key in ['user_token', 'current_user', 'current_conversation_id',
-                            'is_developer', 'show_settings', 'agent_mode', 'swarm_mode']:
-                    if key in ['agent_mode', 'swarm_mode', 'show_settings']:
+                            'is_developer', 'show_settings', 'agent_mode', 'swarm_mode', '_menu_expanded']:
+                    if key in ['agent_mode', 'swarm_mode', 'show_settings', '_menu_expanded']:
                         st.session_state[key] = False
                     else:
                         st.session_state[key] = None
@@ -160,7 +157,8 @@ class FloatingMenu:
         swarm_mode = "Swarm" in mode
         
         if agent_mode:
-            st.caption(f"Max steps: {st.session_state.get('agent_max_steps', 15)}")
+            st.session_state.agent_max_steps = st.slider("Max Steps", 5, 30, 
+                st.session_state.get("agent_max_steps", 15), key="fm_max_steps")
         
         return agent_mode, swarm_mode
     
