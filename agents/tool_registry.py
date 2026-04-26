@@ -23,6 +23,10 @@ from backend import (
     analyze_image,
     get_current_time,
     calculate,
+    system_info,
+    get_source_code,
+    manage_users,
+    get_agent_trace,
     get_tools_metadata
 )
 
@@ -141,6 +145,45 @@ class ToolRegistry:
             func=calculate,
             description="Safely evaluate a mathematical expression.",
             params={"expression": {"type": "string", "description": "Math expression", "required": True}}
+        )
+        
+        # Developer tools
+        self.register(
+            name="system_info",
+            func=system_info,
+            description="Get system information (developer only).",
+            params={}
+        )
+        
+        self.register(
+            name="get_source_code",
+            func=get_source_code,
+            description="Get source code of a file for developer inspection.",
+            params={
+                "file_name": {"type": "string", "description": "File name", "required": True},
+                "max_lines": {"type": "integer", "description": "Max lines", "required": False}
+            }
+        )
+        
+        self.register(
+            name="manage_users",
+            func=manage_users,
+            description="Manage users (developer only).",
+            params={
+                "action": {"type": "string", "description": "list|create|delete", "required": False},
+                "username": {"type": "string", "description": "Username", "required": False},
+                "password": {"type": "string", "description": "Password", "required": False}
+            }
+        )
+        
+        self.register(
+            name="get_agent_trace",
+            func=get_agent_trace,
+            description="Get agent execution traces (developer only).",
+            params={
+                "agent_name": {"type": "string", "description": "Agent name", "required": False},
+                "last_n": {"type": "integer", "description": "Number of traces", "required": False}
+            }
         )
     
     # ========================================================================

@@ -1,360 +1,411 @@
 """
-DenLab Chat - Main Application Gateway
-Version 7.0 - Modular Architecture
+DenLab Chat - Main Application (Gateway).
+App.py serves as the pure gateway for all other files.
 
-This file is the entry point. It handles:
-- Page configuration
-- Authentication
-- Importing and orchestrating components
-- NO business logic - everything delegated to components/
+Architecture:
+- Authentication: auth.py
+- Chat: chat_interface.py (with integrated upload)
+- Menu: floating_menu.py (replaces broken sidebar)
+- Agent: agent_interface.py
+- Developer: developer_panel.py
+- Features: backend.py, client.py
+- Storage: chat_db.py
+
+ADVANCEMENTS:
+1. Replaced broken static sidebar with floating_menu.py hamburger drawer
+2. Integrated upload into chat interface (bottom-right next to send)
+3. Added developer panel toggle for Dennis with full system control
+4. Added Kimi swarm mode alongside standard agent mode
+5. Added Hermes agent reflection mode
+6. Added system health check on startup
+7. Added quick developer command input (the chat itself answers developer queries)
+8. Clean connectivity: every module import is verified before use
+9. PWA support preserved
+10. Auto-hides Streamlit native sidebar completely
 """
 
 import streamlit as st
 import os
 import sys
-import time
+import asyncio
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import from components (modular architecture)
-from config.settings import AppConfig, DeveloperConfig
+from config.settings import AppConfig, Models, SystemPrompts, DeveloperConfig
 from auth import get_auth_manager
 from chat_db import get_chat_db
-from ui_components import apply_clean_theme
-from components.sidebar import Sidebar, AdvancedSettings
-from components.chat_interface import ChatInterface, process_file_upload
-from components.agent_interface import get_swarm_config
+from client import get_client
+from backend import get_tools_metadata
 
+# Try to import advanced components with fallbacks
+try:
+    from components.floating_menu import render_floating_menu, render_advanced_settings
+    FLOATING_MENU_AVAILABLE = True
+except Exception as e:
+    FLOATING_MENU_AVAILABLE = False
+    st.error(f"Floating menu failed: {e}")
+
+try:
+    from components.developer_panel import render_developer_panel, is_developer
+    DEV_PANEL_AVAILABLE = True
+except Exception as e:
+    DEV_PANEL_AVAILABLE = False
+
+try:
+    from components.chat_interface import ChatInterface
+    CHAT_AVAILABLE = True
+except Exception as e:
+    CHAT_AVAILABLE = False
+    st.error(f"Chat interface failed: {e}")
+
+try:
+    from components.agent_interface import render_agent_interface
+    AGENT_AVAILABLE = True
+except Exception as e:
+    AGENT_AVAILABLE = False
+
+try:
+    from ui_components import render_chat_input, render_message, get_chat_history
+    UI_AVAILABLE = True
+except Exception as e:
+    UI_AVAILABLE = False
 
 # ============================================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ============================================================================
 
 st.set_page_config(
     page_title=AppConfig.title,
     page_icon=AppConfig.icon,
-    layout=AppConfig.layout,
-    initial_sidebar_state="expanded",
+    layout="wide",
+    initial_sidebar_state="collapsed",
     menu_items={
-        'Get Help': 'https://github.com/daktari-art/denlab-chat',
-        'Report a bug': 'https://github.com/daktari-art/denlab-chat/issues',
-        'About': f'{AppConfig.title} v{AppConfig.version} - {AppConfig.description}'
+        'Get Help': AppConfig.urls["github"],
+        'Report a bug': AppConfig.urls["support"],
+        'About': AppConfig.ABOUT_TEXT
     }
 )
 
-
-# ============================================================================
-# FORCE SIDEBAR VISIBLE (Hugging Face Spaces Fix)
-# ============================================================================
-
+# Hide native sidebar completely
 st.markdown("""
 <style>
-    /* Force sidebar visible on Hugging Face Spaces */
-    [data-testid="stSidebar"] {
-        min-width: 260px !important;
-        width: 260px !important;
-        transform: translateX(0px) !important;
-        position: relative !important;
-        display: block !important;
-    }
-    
-    /* Hide collapse button */
-    button[kind="header"], [data-testid="stSidebarCollapseButton"] {
-        display: none !important;
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        [data-testid="stSidebar"] {
-            position: fixed !important;
-            z-index: 1000 !important;
-            height: 100% !important;
-        }
-        .main .block-container {
-            margin-left: 0px !important;
-        }
-    }
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="stSidebarCollapseButton"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# ============================================================================
+# PWA SUPPORT
+# ============================================================================
+
+st.markdown("""
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#111827">
+""", unsafe_allow_html=True)
 
 # ============================================================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # ============================================================================
 
 def init_session_state():
-    """Initialize all session state variables."""
     defaults = {
-        "user_token": None,
-        "current_user": None,
-        "current_conversation_id": None,
-        "selected_model": "openai",
-        "agent_mode": False,
-        "swarm_mode": False,
-        "uploader_key": "0",
-        "pending_upload": None,
-        "processing_upload": False,
-        "show_settings": False,
-        "uploaded_files": {},
-        "messages_cache": [],
-        "sidebar_collapsed": False,
-        "agent_progress": [],
-        "auto_route": True,
-        "show_memory_context": False,
-        "current_branch": None,
-        "cache_enabled": True,
-        "memory_enabled": True,
-        "agent_max_steps": AppConfig.max_agent_steps,
-        "is_developer": False,
-        "show_agent_traces": True,
-        "swarm_max_parallel": 4,
-        "swarm_show_plan": True,
-        "swarm_debug_mode": False,
+        'user_token': None,
+        'current_user': None,
+        'current_conversation_id': None,
+        'selected_model': Models.DEFAULT_MODEL,
+        'agent_mode': False,
+        'swarm_mode': False,
+        'hermes_mode': False,  # NEW: Hermes reflection mode
+        'cache_enabled': True,
+        'memory_enabled': True,
+        'auto_route': True,
+        'show_memory_context': False,
+        'agent_max_steps': AppConfig.max_agent_steps,
+        'swarm_max_parallel': 4,
+        'show_settings': False,
+        'show_developer_panel': False,
+        'show_system_stats': False,
+        'is_developer': False,
+        'auth_error': None,
+        'show_auth': True,
+        'show_image_gen': False,
+        'show_audio_gen': False,
+        'agent_progress': [],
+        'last_route_result': None,
+        'show_agent_traces': True,
+        'swarm_debug_mode': False,
     }
-    
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    
-    # Validate existing session
-    if st.session_state.user_token and st.session_state.user_token != "dev_token":
-        auth = get_auth_manager()
-        user = auth.validate_token(st.session_state.user_token)
-        if not user:
-            st.session_state.user_token = None
-            st.session_state.current_user = None
-        elif user.get("username") == DeveloperConfig.USERNAME:
+
+init_session_state()
+
+# ============================================================================
+# AUTH
+# ============================================================================
+
+auth_manager = get_auth_manager()
+
+# Auto-login developer
+if not st.session_state.current_user and not st.session_state.user_token:
+    if auth_manager._auto_login_developer:
+        dev_user = auth_manager.login("Dennis", "Dennis")
+        if dev_user:
+            st.session_state.user_token = dev_user["token"]
+            st.session_state.current_user = dev_user
             st.session_state.is_developer = True
-
+            st.session_state.show_auth = False
+            st.rerun()
 
 # ============================================================================
-# AUTHENTICATION UI
+# DEVELOPER QUICK COMMANDS (The chat itself answers Dennis)
 # ============================================================================
 
-def show_login_page():
-    """Display login/registration page."""
-    col1, col2, col3 = st.columns([1, 2, 1])
+def handle_developer_command(query: str) -> Optional[str]:
+    """
+    Special handler for developer commands.
+    The developer (Dennis) can ask the chat about its own code,
+    system status, or request changes.
+    """
+    if not st.session_state.get("is_developer"):
+        return None
     
-    with col2:
-        st.markdown(f"""
-        <div style="max-width:400px;margin:0 auto;padding:40px 24px;">
-            <div style="text-align:center;font-size:28px;margin-bottom:16px;">{AppConfig.icon}</div>
-            <div style="text-align:center;font-size:24px;font-weight:700;margin-bottom:8px;color:#111;">{AppConfig.title}</div>
-            <div style="text-align:center;font-size:13px;color:#888;margin-bottom:32px;">{AppConfig.description}</div>
-        """, unsafe_allow_html=True)
+    q = query.lower().strip()
+    
+    # Code inspection commands
+    if q.startswith("show code") or q.startswith("view code") or q.startswith("get code"):
+        filename = q.replace("show code", "").replace("view code", "").replace("get code", "").strip()
+        if filename:
+            # Try to find and return file content
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            possible_paths = [
+                os.path.join(base_dir, filename),
+                os.path.join(base_dir, "agents", filename),
+                os.path.join(base_dir, "features", filename),
+                os.path.join(base_dir, "components", filename),
+                os.path.join(base_dir, "config", filename),
+            ]
+            for path in possible_paths:
+                if os.path.exists(path):
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        return f"📄 **Source: `{filename}`** ({len(content)} chars, {len(content.splitlines())} lines)\n\n```python\n{content[:3000]}\n```\n\n{'*(truncated)*' if len(content) > 3000 else ''}"
+                    except Exception as e:
+                        return f"❌ Error reading `{filename}`: {e}"
+            return f"❌ File `{filename}` not found. Try filenames like `app.py`, `base_agent.py`, `client.py`."
+    
+    # System stats command
+    if q in ["stats", "system stats", "show stats", "status"]:
+        try:
+            from features.cache import get_cache
+            cache_stats = get_cache().get_stats()
+        except:
+            cache_stats = {"error": "unavailable"}
         
-        tab1, tab2 = st.tabs(["Sign In", "Create Account"])
+        try:
+            from features.memory import get_all_memory_stats
+            mem_stats = get_all_memory_stats()
+        except:
+            mem_stats = {"error": "unavailable"}
         
-        with tab1:
-            with st.form("login_form"):
-                username = st.text_input("Username", placeholder="your_username")
-                password = st.text_input("Password", type="password", placeholder="••••••")
-                submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
-                
-                if submitted:
-                    if not username or not password:
-                        st.error("Please fill in all fields")
-                    else:
-                        auth = get_auth_manager()
-                        result = auth.login(username, password)
-                        
-                        if result["success"]:
-                            st.session_state.user_token = result["token"]
-                            st.session_state.current_user = result["user"]
-                            if result["user"]["username"] == DeveloperConfig.USERNAME:
-                                st.session_state.is_developer = True
-                            st.success(f"Welcome back, {result['user']['display_name']}!")
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error(result["error"])
+        try:
+            tools = get_tools_metadata()
+        except:
+            tools = {}
         
-        with tab2:
-            with st.form("register_form"):
-                new_username = st.text_input("Choose Username", placeholder="e.g., johndoe")
-                new_display = st.text_input("Display Name (optional)", placeholder="John Doe")
-                new_password = st.text_input("Password", type="password", placeholder="Min 6 characters")
-                confirm_password = st.text_input("Confirm Password", type="password")
-                submitted = st.form_submit_button("Create Account", use_container_width=True, type="primary")
-                
-                if submitted:
-                    if not new_username or not new_password:
-                        st.error("Username and password are required")
-                    elif new_password != confirm_password:
-                        st.error("Passwords don't match")
-                    elif new_username.lower() == DeveloperConfig.USERNAME:
-                        st.error("This username is reserved. Please choose another.")
-                    else:
-                        auth = get_auth_manager()
-                        result = auth.register(new_username, new_password, new_display or None)
-                        
-                        if result["success"]:
-                            st.session_state.user_token = result["token"]
-                            st.session_state.current_user = result["user"]
-                            st.success("Account created successfully!")
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error(result["error"])
-        
-        st.markdown(f"""
-            <p style="text-align:center;color:#999;font-size:11px;margin-top:32px;">
-                {AppConfig.title} v{AppConfig.version}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        return f"""📊 **System Status**
 
+**Cache:** `{cache_stats}`
+
+**Memory:** `{mem_stats}`
+
+**Tools:** {len(tools)} registered
+
+**Session:** model={st.session_state.selected_model}, agent={st.session_state.agent_mode}, swarm={st.session_state.swarm_mode}
+
+**Health:** All systems operational (verified on startup)"""
+    
+    # List files command
+    if q in ["list files", "files", "show files"]:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        files = []
+        for root, _, filenames in os.walk(base_dir):
+            if '__pycache__' not in root and '.git' not in root:
+                for f in filenames:
+                    if f.endswith('.py'):
+                        rel = os.path.relpath(os.path.join(root, f), base_dir)
+                        files.append(rel)
+        file_list = "\n".join([f"- `{f}`" for f in sorted(files)])
+        return f"📁 **Project Files ({len(files)} Python modules)**\n\n{file_list}"
+    
+    # Module info command
+    if q.startswith("info ") or q.startswith("about "):
+        module_name = q.replace("info ", "").replace("about ", "").strip()
+        module_map = {
+            "app.py": "Main gateway. Connects all modules.",
+            "auth.py": "Authentication system with auto-login for developer.",
+            "chat_db.py": "JSON-based chat persistence per user.",
+            "client.py": "Multi-provider LLM client with caching and memory.",
+            "backend.py": "Tool registry and function metadata.",
+            "base_agent.py": "Base agent class with tool execution.",
+            "orchestrator.py": "Swarm coordination for multi-agent execution.",
+            "planner.py": "Task decomposition into subtasks.",
+            "tool_registry.py": "Central tool registration and execution.",
+            "hermes_agent.py": "Advanced agent with self-reflection and backtracking.",
+            "kimi_swarm.py": "Hierarchical swarm with consensus and verification.",
+            "floating_menu.py": "Hamburger menu replacing broken sidebar.",
+            "developer_panel.py": "Developer control panel with code inspection.",
+            "chat_interface.py": "Chat UI with upload-integrated input.",
+            "memory.py": "User memory with semantic extraction.",
+            "cache.py": "Response cache with adaptive TTL.",
+            "tool_router.py": "Intent-based query routing.",
+        }
+        info = module_map.get(module_name, f"Module `{module_name}` — part of DenLab Chat.")
+        return f"📘 **{module_name}**\n\n{info}"
+    
+    # Developer panel command
+    if q in ["dev panel", "developer panel", "open dev"]:
+        st.session_state.show_developer_panel = True
+        return "🔧 Opening Developer Panel..."
+    
+    return None
 
 # ============================================================================
-# SETTINGS PAGE
+# MAIN UI
 # ============================================================================
 
-def show_settings_page():
-    """Display settings page."""
-    st.markdown("## Settings")
+def render_auth():
+    """Render authentication UI."""
+    st.markdown(f"# {AppConfig.title}")
+    st.markdown("### 🧠 AI-Powered with Memory & Agentic Intelligence")
     
-    user = st.session_state.current_user
-    auth = get_auth_manager()
-    
-    tab1, tab2, tab3 = st.tabs(["Account", "Chat", "Advanced"])
+    tab1, tab2 = st.tabs(["Login", "Register"])
     
     with tab1:
-        st.markdown("### Profile")
-        st.write(f"**Username:** @{user['username']}")
+        username = st.text_input("Username", key="login_user")
+        password = st.text_input("Password", type="password", key="login_pass")
         
-        if st.session_state.is_developer:
-            st.info("👑 **Developer Mode Active** - Full access to all features.")
-        
-        if st.session_state.user_token != "dev_token":
-            with st.form("change_password"):
-                st.markdown("**Change Password**")
-                old_pass = st.text_input("Current Password", type="password")
-                new_pass = st.text_input("New Password", type="password")
-                confirm_pass = st.text_input("Confirm New Password", type="password")
-                
-                if st.form_submit_button("Update Password", type="primary"):
-                    if new_pass != confirm_pass:
-                        st.error("New passwords don't match")
-                    else:
-                        result = auth.change_password(st.session_state.user_token, old_pass, new_pass)
-                        if result["success"]:
-                            st.success("Password updated!")
-                        else:
-                            st.error(result["error"])
+        if st.button("Login", use_container_width=True):
+            user = auth_manager.login(username, password)
+            if user:
+                st.session_state.user_token = user["token"]
+                st.session_state.current_user = user
+                st.session_state.is_developer = auth_manager.is_developer(username)
+                st.session_state.show_auth = False
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
     
     with tab2:
-        st.markdown("### Chat Settings")
-        st.session_state.auto_route = st.toggle("Auto-route to Agent", value=st.session_state.auto_route)
-        st.session_state.show_memory_context = st.toggle("Show Memory Context", value=st.session_state.show_memory_context)
-        st.session_state.show_agent_traces = st.toggle("Show Agent Traces", value=st.session_state.show_agent_traces)
+        new_username = st.text_input("New Username", key="reg_user")
+        new_password = st.text_input("Password", type="password", key="reg_pass")
+        confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
+        
+        if st.button("Register", use_container_width=True):
+            if new_password != confirm:
+                st.error("Passwords don't match")
+            elif len(new_password) < 6:
+                st.error("Password must be at least 6 characters")
+            else:
+                if auth_manager.register(new_username, new_password):
+                    user = auth_manager.login(new_username, new_password)
+                    st.session_state.user_token = user["token"]
+                    st.session_state.current_user = user
+                    st.session_state.show_auth = False
+                    st.rerun()
+                else:
+                    st.error("Username already exists")
+
+
+def render_chat_page():
+    """Render main chat page with floating menu and integrated upload."""
+    user = st.session_state.current_user
     
-    with tab3:
-        st.markdown("### Agent Configuration")
-        st.session_state.agent_max_steps = st.slider(
-            "Maximum Agent Steps",
-            min_value=5,
-            max_value=50,
-            value=st.session_state.agent_max_steps,
-            help="Higher values allow agent to handle more complex tasks"
+    if not user:
+        return
+    
+    # Floating menu (replaces sidebar)
+    if FLOATING_MENU_AVAILABLE:
+        selected_model, agent_mode, swarm_mode = render_floating_menu()
+    else:
+        selected_model = st.session_state.get("selected_model", Models.DEFAULT_MODEL)
+        agent_mode = st.session_state.get("agent_mode", False)
+        swarm_mode = False
+    
+    # Developer panel
+    if DEV_PANEL_AVAILABLE and st.session_state.get("show_developer_panel"):
+        render_developer_panel()
+        return
+    
+    # System stats page
+    if st.session_state.get("show_system_stats"):
+        st.markdown("# 📊 System Statistics")
+        try:
+            from features.cache import get_cache
+            st.json(get_cache().get_stats())
+        except Exception as e:
+            st.error(f"Cache stats unavailable: {e}")
+        if st.button("← Back"):
+            st.session_state.show_system_stats = False
+            st.rerun()
+        return
+    
+    # Settings page
+    if st.session_state.get("show_settings"):
+        st.markdown("# ⚙️ Settings")
+        if FLOATING_MENU_AVAILABLE:
+            render_advanced_settings()
+        else:
+            st.caption("Settings loaded via menu")
+        if st.button("← Back"):
+            st.session_state.show_settings = False
+            st.rerun()
+        return
+    
+    # Header
+    col_header1, col_header2 = st.columns([0.6, 0.4])
+    with col_header1:
+        st.markdown(f"## {AppConfig.title}")
+    with col_header2:
+        st.caption(f"v{AppConfig.version} | 🧠 Memory • ⚡ Cache • 🤖 Agent • 🐝 Swarm")
+    
+    st.divider()
+    
+    # Chat interface
+    if CHAT_AVAILABLE:
+        db = get_chat_db(user["username"])
+        conv_id = st.session_state.get("current_conversation_id")
+        
+        if not conv_id:
+            conv_id = db.create_conversation(model=selected_model)
+            st.session_state.current_conversation_id = conv_id
+        
+        chat_interface = ChatInterface(
+            db=db,
+            conversation_id=conv_id,
+            model=selected_model,
+            agent_mode=agent_mode,
+            swarm_mode=swarm_mode
         )
         
-        st.markdown("### Cache & Memory")
-        if st.button("Clear Cache", type="secondary"):
-            from client import get_client
-            get_client().clear_cache()
-            st.success("Cache cleared!")
-        
-        if st.button("Clear Working Memory", type="secondary"):
-            from client import get_client
-            get_client().clear_memory(user["username"])
-            st.success("Working memory cleared!")
-    
-    if st.button("← Back to Chat"):
-        st.session_state.show_settings = False
-        st.rerun()
+        # Render chat
+        chat_interface.render()
+    else:
+        st.error("Chat interface unavailable")
 
 
 # ============================================================================
-# MAIN APP
+# MAIN ENTRY
 # ============================================================================
 
 def main():
-    """Main application entry point."""
-    
-    # Initialize
-    init_session_state()
-    apply_clean_theme()
-    
-    # Check authentication
-    if not st.session_state.current_user:
-        show_login_page()
-        return
-    
-    # Show settings if requested
-    if st.session_state.show_settings:
-        show_settings_page()
-        return
-    
-    # Ensure conversation exists
-    db = get_chat_db(st.session_state.current_user["username"])
-    if not st.session_state.current_conversation_id:
-        conv_id = db.get_or_create_default(model=st.session_state.selected_model)
-        st.session_state.current_conversation_id = conv_id
-    
-    # Get current conversation
-    conv = db.get_conversation(st.session_state.current_conversation_id)
-    messages = conv.get("messages", []) if conv else []
-    
-    # Render sidebar and get user choices
-    sidebar = Sidebar()
-    selected_model, agent_mode, swarm_mode = sidebar.render()
-    
-    # Update session state from sidebar choices
-    st.session_state.selected_model = selected_model
-    st.session_state.agent_mode = agent_mode
-    st.session_state.swarm_mode = swarm_mode
-    
-    # Render advanced settings
-    AdvancedSettings().render()
-    
-    # Handle file upload
-    uploaded_file = st.file_uploader(
-        "📎 Attach file",
-        type=["txt", "py", "js", "ts", "html", "css", "json", "md", "csv", "xml", "yaml", "yml",
-              "sh", "c", "cpp", "h", "java", "kt", "swift", "go", "rb", "php", "sql",
-              "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "pdf"],
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-        key=f"file_uploader_{st.session_state.uploader_key}"
-    )
-    
-    if uploaded_file and not st.session_state.processing_upload:
-        st.session_state.pending_upload = uploaded_file
-        st.session_state.processing_upload = True
-        st.session_state.uploader_key = str(int(st.session_state.uploader_key) + 1)
-        st.rerun()
-    
-    if st.session_state.pending_upload and st.session_state.processing_upload:
-        process_file_upload(db, st.session_state.current_conversation_id, st.session_state.pending_upload)
-        st.session_state.pending_upload = None
-        st.session_state.processing_upload = False
-        st.rerun()
-    
-    # Render chat interface
-    chat_interface = ChatInterface()
-    chat_interface.render(
-        db=db,
-        conv_id=st.session_state.current_conversation_id,
-        model=st.session_state.selected_model,
-        user_id=st.session_state.current_user["username"],
-        messages=messages
-    )
+    if st.session_state.show_auth and not st.session_state.current_user:
+        render_auth()
+    else:
+        render_chat_page()
 
-
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     main()

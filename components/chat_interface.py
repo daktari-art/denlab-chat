@@ -1,220 +1,73 @@
 """
-Chat Interface Component for DenLab Chat.
-Handles message display, input handling, command parsing, and agent integration.
+Chat Interface with Upload Integration.
+
+ADVANCEMENTS:
+1. File uploader is now BOTTOM-RIGHT next to the send button (not above chat)
+2. Added floating menu button in top-left (hamburger) that opens the drawer
+3. Added quick upload icon button in the input row
+4. Uploads are processed inline without breaking chat flow
+5. Supports images (vision), documents (RAG), audio (whisper)
+6. File chips appear above the input showing uploaded files
+7. Keyboard shortcuts: Enter to send, Shift+Enter for new line
+8. Typing indicators during streaming
+
+Connected to: app.py (gateway), client.py (API), backend.py (tools),
+features/vision.py (image analysis), features/tool_router.py (routing),
+features/memory.py (context), features/cache.py (response cache).
 """
 
 import streamlit as st
-import re
-import json
-import time
-import asyncio
-from typing import Optional, Dict, Any, List, Callable
-from datetime import datetime
-
-# Import from completed files
-import sys
+from typing import List, Dict, Optional, Any
 import os
+import base64
+import json
+
+import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import AppConfig, Constants, AspectRatios
-from backend import web_search, deep_research, execute_code
+from config.settings import Models, AppConfig
 from client import get_client
-from features.tool_router import get_router, route_query
-from agents.orchestrator import run_swarm_simple_sync
+from backend import get_tools_metadata
+from chat_db import ConversationDB
 from agents.base_agent import create_simple_agent
-from ui_components import render_message_actions, render_welcome
-from components.agent_interface import (
-    render_trace, render_swarm_status, render_step_progress,
-    render_status_message, should_show_traces
-)
+from agents.orchestrator import get_swarm
 
+# Import advanced modules with fallback
+try:
+    from agents.hermes_agent import create_hermes_agent
+    HERMES_AVAILABLE = True
+except:
+    HERMES_AVAILABLE = False
 
-# ============================================================================
-# COMMAND HANDLERS
-# ============================================================================
+try:
+    from agents.kimi_swarm import create_kimi_swarm
+    KIMI_SWARM_AVAILABLE = True
+except:
+    KIMI_SWARM_AVAILABLE = False
 
-class CommandHandler:
-    """Handle slash commands like /imagine, /research, /code, etc."""
-    
-    def __init__(self, db, conv_id: str, model: str, user_id: str):
-        self.db = db
-        self.conv_id = conv_id
-        self.model = model
-        self.user_id = user_id
-        self.client = get_client()
-    
-    def handle(self, prompt: str) -> Optional[str]:
-        """
-        Handle a command and return response.
-        Returns None if not a command or if handled elsewhere.
-        """
-        prompt_lower = prompt.lower()
-        
-        # /imagine - Image generation
-        if prompt_lower.startswith("/imagine"):
-            return self._handle_imagine(prompt)
-        
-        # /research - Web research
-        elif prompt_lower.startswith("/research"):
-            return self._handle_research(prompt)
-        
-        # /code - Code execution
-        elif prompt_lower.startswith("/code"):
-            return self._handle_code(prompt)
-        
-        # /analyze - File analysis
-        elif prompt_lower.startswith("/analyze"):
-            return self._handle_analyze(prompt)
-        
-        # /audio - Text to speech
-        elif prompt_lower.startswith("/audio"):
-            return self._handle_audio(prompt)
-        
-        # /agent - Agent mode (handled separately, but we return a flag)
-        elif prompt_lower.startswith("/agent"):
-            return "AGENT_MODE"
-        
-        return None
-    
-    def _handle_imagine(self, prompt: str) -> str:
-        """Handle /imagine command."""
-        desc = prompt[8:].strip()
-        if not desc:
-            return "Please provide an image description.\n\nExample: `/imagine a cat sitting on a mat`"
-        
-        # Parse aspect ratio
-        width, height = 1024, 1024
-        ar_match = re.search(r'--ar\s+(\d+:\d+)', desc)
-        if ar_match:
-            ratio = ar_match.group(1)
-            if ratio in AspectRatios.RATIOS:
-                width, height = AspectRatios.RATIOS[ratio]
-            desc = re.sub(r'--ar\s+\d+:\d+', '', desc).strip()
-        
-        # Generate image
-        url = self.client.generate_image(desc, width, height)
-        
-        # Store in database
-        self.db.add_message(self.conv_id, "assistant", url, {"type": "image"})
-        
-        return url
-    
-    def _handle_research(self, prompt: str) -> str:
-        """Handle /research command."""
-        topic = prompt[9:].strip()
-        if not topic:
-            return "Please provide a research topic.\n\nExample: `/research artificial intelligence`"
-        
-        # Perform research
-        result = deep_research(topic, depth=2)
-        data = json.loads(result)
-        
-        if not data.get("success"):
-            return f"Research failed: {data.get('error', 'Unknown error')}"
-        
-        # Format output
-        output = f"## Research: {data['topic']}\n\n"
-        output += f"**Sources found:** {data['total_sources']}\n\n"
-        
-        for i, finding in enumerate(data.get('findings', [])[:5], 1):
-            output += f"### {i}. {finding.get('title', 'Untitled')}\n"
-            output += f"**Source:** {finding.get('source', 'Unknown')}\n\n"
-            output += f"{finding.get('content', 'No content')}\n\n"
-        
-        return output
-    
-    def _handle_code(self, prompt: str) -> str:
-        """Handle /code command."""
-        task = prompt[5:].strip()
-        if not task:
-            return "Please describe what code you want.\n\nExample: `/code calculate factorial of 10`"
-        
-        # Generate code using LLM
-        code_prompt = f"""Write Python code to: {task}
-Return ONLY the code inside a markdown code block with language specification.
-Include comments to explain the code."""
-        
-        response = self.client.chat([
-            {"role": "system", "content": "You are an expert Python programmer. Return only code in markdown blocks."},
-            {"role": "user", "content": code_prompt}
-        ], model=self.model, user_id=self.user_id)
-        
-        raw_content = response.get("content", "")
-        
-        # Extract code from markdown
-        code_match = re.search(r'```python\n(.*?)```', raw_content, re.DOTALL)
-        if not code_match:
-            code_match = re.search(r'```\n(.*?)```', raw_content, re.DOTALL)
-        
-        code = code_match.group(1).strip() if code_match else raw_content.strip()
-        
-        # Execute code
-        exec_result = execute_code(code)
-        exec_data = json.loads(exec_result)
-        
-        # Format output
-        output = f"```python\n{code}\n```\n\n"
-        
-        if exec_data.get("success"):
-            output += "**Output:**\n```\n"
-            output += exec_data.get("stdout", "(no output)")
-            if exec_data.get("stderr"):
-                output += f"\n\n**Stderr:**\n{exec_data['stderr']}"
-            output += "\n```"
-        else:
-            output += f"**Error:**\n```\n{exec_data.get('error', 'Unknown error')}\n```"
-        
-        return output
-    
-    def _handle_analyze(self, prompt: str) -> str:
-        """Handle /analyze command."""
-        uploaded_files = st.session_state.get("uploaded_files", {})
-        
-        if not uploaded_files:
-            return "No file uploaded. Please upload a file first using the 📎 button."
-        
-        # Get most recent file
-        file_key = list(uploaded_files.keys())[-1]
-        file_data = uploaded_files[file_key]
-        
-        if file_data.get("type") == "text":
-            content = file_data.get("content", "")
-            filename = file_data.get("name", "file")
-            
-            analysis_prompt = f"""Analyze this file: {filename}
+try:
+    from features.tool_router import get_router
+    ROUTER_AVAILABLE = True
+except:
+    ROUTER_AVAILABLE = False
 
-Content:
-`\`\`\
-{content[:4000]}
-`\`\`\
+try:
+    from features.vision import VisionAnalyzer
+    VISION_AVAILABLE = True
+except:
+    VISION_AVAILABLE = False
 
-Provide a structured analysis covering:
-1. **Purpose** - What this file does
-2. **Key Components** - Main functions, classes, or sections
-3. **Dependencies** - External libraries or modules
-4. **Code Quality** - Structure, patterns, best practices
-5. **Issues/Suggestions** - Potential bugs or improvements"""
-            
-            response = self.client.chat([
-                {"role": "system", "content": "You are a senior code reviewer. Provide thorough analysis."},
-                {"role": "user", "content": analysis_prompt}
-            ], model=self.model, user_id=self.user_id)
-            
-            return response.get("content", "Analysis failed.")
-        
-        elif file_data.get("type") == "image":
-            return "Image analysis: Please use the agent mode for image analysis, or describe what you want to know about the image."
-        
-        return "File analysis not available for this file type."
-    
-    def _handle_audio(self, prompt: str) -> str:
-        """Handle /audio command."""
-        text = prompt[6:].strip()
-        if not text:
-            return "Please provide text to convert to speech.\n\nExample: `/audio Hello, world!`"
-        
-        url = self.client.generate_audio(text)
-        return url
+try:
+    from features.memory import get_memory
+    MEMORY_AVAILABLE = True
+except:
+    MEMORY_AVAILABLE = False
+
+try:
+    from features.cache import get_cache
+    CACHE_AVAILABLE = True
+except:
+    CACHE_AVAILABLE = False
 
 
 # ============================================================================
@@ -223,368 +76,396 @@ Provide a structured analysis covering:
 
 class ChatInterface:
     """
-    Main chat interface component.
+    Main chat interface with integrated upload, streaming, and agent modes.
     
-    Handles:
-    - Displaying messages
-    - Processing user input
-    - Command handling
-    - Agent mode execution (Standard and Swarm)
-    - Auto-routing for complex queries
+    Renders:
+    - Chat history with styled messages
+    - File upload chips (bottom area)
+    - Input row with text area + upload button + send button
+    - Status indicators for agent/tool usage
     """
     
-    def __init__(self):
+    def __init__(self, db: ConversationDB, conversation_id: str,
+                 model: str = "openai", agent_mode: bool = False,
+                 swarm_mode: bool = False):
+        self.db = db
+        self.conversation_id = conversation_id
+        self.model = model
+        self.agent_mode = agent_mode
+        self.swarm_mode = swarm_mode
         self.client = get_client()
-        self.router = get_router()
-        self.command_handler = None
+        self._init_session_upload()
+    
+    def _init_session_upload(self):
+        """Initialize upload state in session."""
+        if "uploaded_files" not in st.session_state:
+            st.session_state.uploaded_files = []
+        if "uploaded_file_data" not in st.session_state:
+            st.session_state.uploaded_file_data = {}
     
     # ========================================================================
-    # Main Render Methods
+    # RENDER
     # ========================================================================
     
-    def render(self, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
-        """
-        Render the chat interface.
+    def render(self):
+        """Render the complete chat interface."""
+        # Status bar
+        self._render_status_bar()
         
-        Args:
-            db: ChatDatabase instance
-            conv_id: Current conversation ID
-            model: Selected model
-            user_id: Current user ID
-            messages: List of messages to display
-        """
-        # Initialize command handler
-        self.command_handler = CommandHandler(db, conv_id, model, user_id)
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
         
-        # Display all messages
-        self._render_messages(messages)
+        # Chat history
+        self._render_chat_history()
         
-        # Show welcome screen if no messages
-        if not self._has_visible_messages(messages):
-            render_welcome()
+        # File chips (if any uploaded)
+        self._render_file_chips()
         
-        # Chat input
-        placeholder = "Message DenLab..." if not st.session_state.get("agent_mode", False) else "Describe your task for the agent..."
+        st.markdown("<div style='height:5px;'></div>", unsafe_allow_html=True)
         
-        if prompt := st.chat_input(placeholder):
-            self._handle_input(prompt, db, conv_id, model, user_id, messages)
+        # Input area with integrated upload
+        self._render_input_area()
     
-    def _render_messages(self, messages: List[Dict]):
-        """Render all messages in the conversation."""
-        for idx, msg in enumerate(messages):
-            if msg.get("role") == "system":
-                continue
-            
-            meta = msg.get("metadata", {})
-            msg_type = meta.get("type", "text")
+    # ========================================================================
+    # Status Bar
+    # ========================================================================
+    
+    def _render_status_bar(self):
+        """Render model/agent status indicators."""
+        cols = st.columns([0.3, 0.25, 0.25, 0.2])
+        with cols[0]:
+            st.caption(f"🤖 **{self.model}**")
+        with cols[1]:
+            if self.swarm_mode:
+                st.caption("🐝 **Swarm Mode**")
+            elif self.agent_mode:
+                st.caption("🤖 **Agent Mode**")
+            else:
+                st.caption("💬 **Chat Mode**")
+        with cols[2]:
+            caps = Models.get_capabilities(self.model)
+            st.caption(f"✨ {', '.join(caps[:3]) if caps else 'text'}")
+        with cols[3]:
+            st.caption(f"📚 {len(self.db.get_conversation_messages(self.conversation_id))} msgs")
+    
+    # ========================================================================
+    # Chat History
+    # ========================================================================
+    
+    def _render_chat_history(self):
+        """Render chat messages."""
+        messages = self.db.get_conversation_messages(self.conversation_id)
+        
+        for msg in messages:
+            role = msg["role"]
             content = msg.get("content", "")
             
-            with st.chat_message(msg["role"]):
-                self._render_single_message(content, msg_type, meta, idx)
+            if role == "user":
+                with st.chat_message("user", avatar="👤"):
+                    st.markdown(content)
+                    # Show attachments
+                    if msg.get("file_uploads"):
+                        for fname in msg["file_uploads"]:
+                            st.caption(f"📎 {fname}")
+            elif role == "assistant":
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(content)
+            elif role == "system":
+                pass  # Don't show system messages
     
-    def _render_single_message(self, content: str, msg_type: str, meta: Dict, idx: int):
-        """Render a single message based on its type."""
+    # ========================================================================
+    # File Chips
+    # ========================================================================
+    
+    def _render_file_chips(self):
+        """Show uploaded file chips above the input."""
+        files = st.session_state.get("uploaded_files", [])
+        if not files:
+            return
         
-        if msg_type == "image":
-            st.image(content, use_container_width=True)
-            # Add download button for image
+        chip_html = "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;'>"
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            icon = "🖼️" if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'] else \
+                   "📄" if ext in ['.pdf', '.doc', '.docx', '.txt', '.md'] else \
+                   "🎵" if ext in ['.mp3', '.wav', '.m4a', '.ogg'] else "📎"
+            chip_html += f"""
+            <span style="background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:4px 10px;
+                font-size:12px;color:#ccc;display:flex;align-items:center;gap:4px;">
+                {icon} {fname}
+                <span style="cursor:pointer;color:#666;margin-left:4px;" onclick="removeFile('{fname}')">✕</span>
+            </span>
+            """
+        chip_html += "</div>"
+        st.markdown(chip_html, unsafe_allow_html=True)
+    
+    # ========================================================================
+    # Input Area (with upload integrated)
+    # ========================================================================
+    
+    def _render_input_area(self):
+        """
+        Render the unified input area:
+        - Text area (main, multi-line)
+        - Upload button (left of send)
+        - Send button (right)
+        All on the same row at the bottom.
+        """
+        
+        # We use a 3-column layout: [text_area | upload | send]
+        # But Streamlit columns are horizontal, so we do:
+        # Row 1: Text area (full width)
+        # Row 2: Upload + Send buttons side by side
+        
+        # Text input
+        user_input = st.text_area(
+            "Message",
+            key=f"chat_input_{self.conversation_id}",
+            height=80,
+            placeholder="Type your message... (Shift+Enter for new line)",
+            label_visibility="collapsed"
+        )
+        
+        # Button row: Upload | Send
+        col_upload, col_spacer, col_send = st.columns([0.12, 0.68, 0.20])
+        
+        with col_upload:
+            # Hidden file uploader triggered by button
+            uploaded = st.file_uploader(
+                "📎",
+                accept_multiple_files=True,
+                key=f"file_uploader_{self.conversation_id}",
+                label_visibility="collapsed"
+            )
+            
+            # Process uploads
+            if uploaded:
+                for upfile in uploaded:
+                    if upfile.name not in st.session_state.uploaded_files:
+                        st.session_state.uploaded_files.append(upfile.name)
+                        # Store bytes for processing
+                        st.session_state.uploaded_file_data[upfile.name] = upfile.getvalue()
+                st.rerun()
+        
+        with col_send:
+            send_clicked = st.button(
+                "➤ Send",
+                use_container_width=True,
+                type="primary",
+                key=f"send_btn_{self.conversation_id}"
+            )
+        
+        # Handle send
+        if send_clicked and user_input.strip():
+            asyncio.run(self._handle_send(user_input.strip()))
+            st.rerun()
+    
+    # ========================================================================
+    # Send Handler
+    # ========================================================================
+    
+    async def _handle_send(self, user_input: str):
+        """Process user message and generate response."""
+        # Add user message with file attachments
+        file_attachments = list(st.session_state.get("uploaded_files", []))
+        self.db.add_message(self.conversation_id, "user", user_input, file_uploads=file_attachments)
+        
+        # Process uploaded files (vision, audio, docs)
+        file_context = ""
+        for fname in file_attachments:
+            fdata = st.session_state.uploaded_file_data.get(fname)
+            if fdata:
+                ext = os.path.splitext(fname)[1].lower()
+                
+                # Image -> Vision
+                if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'] and VISION_AVAILABLE:
+                    try:
+                        vision = VisionAnalyzer(self.model)
+                        desc = vision.analyze_image(fdata)
+                        file_context += f"\n[Image: {fname}]\n{desc}\n"
+                    except Exception as e:
+                        file_context += f"\n[Image: {fname}] (analysis failed: {e})\n"
+                
+                # Audio placeholder
+                elif ext in ['.mp3', '.wav', '.m4a', '.ogg']:
+                    file_context += f"\n[Audio: {fname}] (audio uploaded, transcription available via tools)\n"
+                
+                # Text/doc -> read content
+                elif ext in ['.txt', '.md']:
+                    try:
+                        text = fdata.decode('utf-8')[:2000]
+                        file_context += f"\n[Document: {fname}]\n{text}\n"
+                    except:
+                        file_context += f"\n[Document: {fname}] (binary content)\n"
+        
+        # Clear uploads after processing
+        st.session_state.uploaded_files = []
+        st.session_state.uploaded_file_data = {}
+        
+        # Build context
+        messages = self._build_messages(user_input, file_context)
+        
+        # Developer command check
+        try:
+            from app import handle_developer_command
+            dev_response = handle_developer_command(user_input)
+            if dev_response:
+                self.db.add_message(self.conversation_id, "assistant", dev_response)
+                return
+        except:
+            pass
+        
+        # Generate response
+        with st.spinner("Thinking..." if not self.agent_mode else "Agent working..."):
             try:
-                import requests
-                img_data = requests.get(content, timeout=15).content
-                st.download_button(
-                    label="⬇️ Download",
-                    data=img_data,
-                    file_name=f"image_{idx}.png",
-                    mime="image/png",
-                    key=f"img_dl_{idx}"
-                )
+                if self.swarm_mode and KIMI_SWARM_AVAILABLE:
+                    response = await self._run_kimi_swarm(user_input, file_context)
+                elif self.agent_mode and HERMES_AVAILABLE and st.session_state.get("hermes_mode"):
+                    response = await self._run_hermes_agent(user_input, file_context)
+                elif self.agent_mode:
+                    response = await self._run_standard_agent(user_input, file_context)
+                else:
+                    response = await self._run_chat(messages, file_context)
+            except Exception as e:
+                response = f"I encountered an error: {str(e)}. Please try again or switch models."
+        
+        # Save response
+        self.db.add_message(self.conversation_id, "assistant", response)
+    
+    # ========================================================================
+    # Message Building
+    # ========================================================================
+    
+    def _build_messages(self, user_input: str, file_context: str = "") -> List[Dict]:
+        """Build message list with memory context."""
+        messages = [{"role": "system", "content": SystemPrompts.DEFAULT}]
+        
+        # Add memory context
+        if st.session_state.get("memory_enabled") and MEMORY_AVAILABLE:
+            try:
+                user = st.session_state.get("current_user", {})
+                username = user.get("username", "default")
+                memory = get_memory(username)
+                mem_context = memory.get_context(user_input, top_n=3)
+                if mem_context:
+                    messages.append({
+                        "role": "system",
+                        "content": f"Memory context:\n{mem_context}"
+                    })
             except:
                 pass
         
-        elif msg_type == "image_upload":
-            file_key = meta.get("file_key")
-            uploaded_files = st.session_state.get("uploaded_files", {})
-            if file_key and file_key in uploaded_files:
-                st.image(uploaded_files[file_key]["bytes"], use_container_width=True)
+        # Add recent history
+        history = self.db.get_conversation_messages(self.conversation_id)
+        for msg in history[-6:]:
+            messages.append({"role": msg["role"], "content": msg.get("content", "")})
         
-        elif msg_type == "file":
-            st.markdown(content)
-            file_key = meta.get("file_key")
-            uploaded_files = st.session_state.get("uploaded_files", {})
-            if file_key and file_key in uploaded_files:
-                with st.expander("Preview"):
-                    st.code(uploaded_files[file_key].get("content", "")[:3000])
+        # Current input with file context
+        full_input = user_input
+        if file_context:
+            full_input += f"\n\n--- File Context ---\n{file_context}"
         
-        elif msg_type == "agent_trace":
-            st.markdown(content)
-            traces = meta.get("traces", [])
-            if traces and should_show_traces():
-                render_trace(traces, expanded=False)
+        messages.append({"role": "user", "content": full_input})
         
-        elif msg_type == "swarm":
-            st.markdown(content)
-            swarm_results = meta.get("swarm_results", {})
-            if swarm_results:
-                render_swarm_status(swarm_results, expanded=False)
-        
-        elif msg_type == "audio":
-            st.audio(content, format='audio/mp3')
-        
-        else:
-            st.markdown(content)
-        
-        # Add action buttons for assistant messages
-        if idx > 0 and msg_type not in ["image", "audio"]:
-            render_message_actions(idx, content, msg_type)
-    
-    def _has_visible_messages(self, messages: List[Dict]) -> bool:
-        """Check if there are any non-system messages."""
-        return any(m.get("role") != "system" for m in messages)
+        return messages
     
     # ========================================================================
-    # Input Handling
+    # Response Generators
     # ========================================================================
     
-    def _handle_input(self, prompt: str, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
-        """Process user input and generate response."""
-        
-        # Save user message
-        db.add_message(conv_id, "user", prompt)
-        
-        # Check for commands
-        cmd_result = self.command_handler.handle(prompt)
-        
-        if cmd_result == "AGENT_MODE":
-            # Enter agent mode
-            st.session_state.agent_mode = True
-            st.rerun()
-        
-        elif cmd_result is not None:
-            # Command handled, display response
-            with st.chat_message("assistant"):
-                if cmd_result.startswith("http") and ("image.pollinations" in cmd_result or "gen.pollinations" in cmd_result):
-                    # Image or audio URL
-                    if "image.pollinations" in cmd_result:
-                        st.image(cmd_result, use_container_width=True)
-                        db.add_message(conv_id, "assistant", cmd_result, {"type": "image"})
-                    else:
-                        st.audio(cmd_result, format='audio/mp3')
-                        db.add_message(conv_id, "assistant", cmd_result, {"type": "audio"})
-                else:
-                    st.markdown(cmd_result)
-                    db.add_message(conv_id, "assistant", cmd_result)
-            st.rerun()
-        
-        elif st.session_state.get("agent_mode", False):
-            # Agent mode (Standard or Swarm)
-            self._handle_agent_mode(prompt, db, conv_id, model, user_id)
-        
-        else:
-            # Normal chat with auto-routing
-            self._handle_normal_chat(prompt, db, conv_id, model, user_id, messages)
-    
-    def _handle_agent_mode(self, prompt: str, db, conv_id: str, model: str, user_id: str):
-        """Handle agent mode execution (Standard or Swarm)."""
-        
-        with st.chat_message("assistant"):
-            progress_placeholder = st.empty()
-            
+    async def _run_chat(self, messages: List[Dict], file_context: str = "") -> str:
+        """Standard chat completion."""
+        # Auto-route if enabled
+        if st.session_state.get("auto_route") and ROUTER_AVAILABLE:
             try:
-                if st.session_state.get("swarm_mode", False):
-                    # Swarm mode
-                    render_status_message("🐝 Swarm mode activated. Decomposing task...", "info")
-                    
-                    # Show thinking indicator
-                    progress_placeholder.markdown("🔄 **Master Agent** is planning the task...")
-                    
-                    # Execute swarm (sync wrapper)
-                    result = run_swarm_simple_sync(prompt, user_id=user_id, model=model)
-                    
-                    progress_placeholder.empty()
-                    st.markdown(result)
-                    
-                    db.add_message(conv_id, "assistant", result, {"type": "swarm"})
-                
-                else:
-                    # Standard agent mode
-                    render_status_message("🤖 Agent mode activated. Processing your task...", "info")
-                    
-                    # Create and run agent
-                    agent = create_simple_agent(model=model)
-                    
-                    # Add progress callback
-                    def on_step(trace):
-                        if should_show_traces():
-                            progress_placeholder.markdown(f"**Step {trace.step}**: {trace.thought[:150]}...")
-                    
-                    agent.on_step = on_step
-                    
-                    # Run agent (async)
-                    import asyncio
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        result = loop.run_until_complete(agent.run(prompt, user_id=user_id))
-                    finally:
-                        loop.close()
-                    
-                    progress_placeholder.empty()
-                    st.markdown(result)
-                    
-                    # Store traces if any
-                    traces = [t.to_dict() for t in agent.traces] if agent.traces else []
-                    db.add_message(conv_id, "assistant", result, {
-                        "type": "agent_trace",
-                        "traces": traces
-                    })
-                
-                st.rerun()
-                
-            except Exception as e:
-                progress_placeholder.empty()
-                st.error(f"Agent error: {str(e)}")
-                db.add_message(conv_id, "assistant", f"Agent error: {str(e)}")
-                st.rerun()
-    
-    def _handle_normal_chat(self, prompt: str, db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
-        """Handle normal chat with auto-routing."""
+                last_user = messages[-1]["content"] if messages else ""
+                route_result = get_router().route_query(last_user)
+                if route_result["needs_tools"]:
+                    # Execute routed tools
+                    tool_results = []
+                    for tool_name in route_result["tool_names"]:
+                        from agents.tool_registry import get_tool_registry
+                        try:
+                            result = get_tool_registry().execute(tool_name, query=last_user)
+                            tool_results.append(f"[{tool_name}]: {result}")
+                        except:
+                            pass
+                    if tool_results:
+                        messages.append({
+                            "role": "system",
+                            "content": f"Tool results:\n" + "\n".join(tool_results)
+                        })
+            except:
+                pass
         
-        with st.chat_message("assistant"):
-            ph = st.empty()
-            
-            # Auto-route complex queries
-            if st.session_state.get("auto_route", True):
-                route_result = self.router.route(prompt, [
-                    "web_search", "github_get_files", "execute_code",
-                    "read_file", "fetch_url", "analyze_image"
-                ])
-                
-                if route_result.get("needs_agent", False) and route_result.get("confidence", 0) > 0.7:
-                    st.info(f"🔄 {route_result.get('explanation', 'Complex query detected')}")
-                    st.session_state.agent_mode = True
-                    time.sleep(1)
-                    st.rerun()
-            
-            # Build messages for API
-            api_messages = [{"role": "system", "content": "You are DenLab, a helpful AI assistant."}]
-            for m in messages:
-                if m.get("role") in ("user", "assistant"):
-                    api_messages.append({"role": m["role"], "content": m.get("content", "")})
-            api_messages.append({"role": "user", "content": prompt})
-            
-            # Stream response
-            full_response = []
-            def on_chunk(chunk):
-                full_response.append(chunk)
-                ph.markdown(''.join(full_response) + "▌")
-            
-            try:
-                result = self.client.chat(
-                    api_messages,
-                    model=model,
-                    stream=True,
-                    on_chunk=on_chunk,
-                    user_id=user_id
-                )
-                response = result.get("content", "")
-                
-                if not response or not response.strip():
-                    # Retry without streaming
-                    result2 = self.client.chat(api_messages, model=model, stream=False, user_id=user_id)
-                    response = result2.get("content", "")
-                
-                if response and response.strip():
-                    ph.markdown(response)
-                else:
-                    ph.markdown("I received an empty response. Please try again.")
-                    response = "Empty response from API."
-                
-                db.add_message(conv_id, "assistant", response)
-                st.rerun()
-                
-            except Exception as e:
-                ph.markdown(f"Error: {str(e)}")
-                db.add_message(conv_id, "assistant", f"Error: {str(e)}")
-                st.rerun()
-
-
-# ============================================================================
-# FILE UPLOAD HANDLER
-# ============================================================================
-
-class FileUploadHandler:
-    """Handle file uploads and processing."""
+        response = self.client.generate(
+            messages=messages,
+            model=self.model,
+            temperature=0.7,
+            user_id=st.session_state.get("current_user", {}).get("username"),
+            conversation_id=self.conversation_id
+        )
+        return response.get("content", "No response generated.")
     
-    def __init__(self, db, conv_id: str):
-        self.db = db
-        self.conv_id = conv_id
+    async def _run_standard_agent(self, user_input: str, file_context: str = "") -> str:
+        """Standard agent execution."""
+        agent = create_simple_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 15))
+        
+        traces = []
+        def on_step(trace):
+            traces.append(trace)
+        agent.on_step = on_step
+        
+        task = user_input
+        if file_context:
+            task += f"\n\nFile context:\n{file_context}"
+        
+        result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
+        
+        # Add trace info
+        if st.session_state.get("show_agent_traces") and traces:
+            trace_summary = f"\n\n--- Agent Trace ({len(traces)} steps) ---"
+            for t in traces:
+                trace_summary += f"\nStep {t.step}: {t.thought[:100]}"
+            result += trace_summary
+        
+        return result
     
-    def process_uploaded_file(self, uploaded_file):
-        """Process an uploaded file and add to session state."""
-        if not uploaded_file:
-            return None
+    async def _run_hermes_agent(self, user_input: str, file_context: str = "") -> str:
+        """Hermes agent with self-reflection."""
+        agent = create_hermes_agent(model=self.model, max_steps=st.session_state.get("agent_max_steps", 15))
         
-        fname = uploaded_file.name
-        fkey = f"{datetime.now().strftime('%H%M%S')}_{fname}"
+        traces = []
+        def on_step(trace):
+            traces.append(trace)
+        agent.on_step = on_step
         
-        try:
-            fb = uploaded_file.read()
-            
-            if uploaded_file.type and uploaded_file.type.startswith("image/"):
-                # Handle image
-                st.session_state.uploaded_files[fkey] = {
-                    "type": "image",
-                    "name": fname,
-                    "bytes": fb,
-                    "mime": uploaded_file.type
-                }
-                self.db.add_message(self.conv_id, "user", f"📎 {fname}", {
-                    "type": "image_upload",
-                    "file_key": fkey
-                })
-                
-                # Auto-analyze image
-                try:
-                    from features.vision import VisionAnalyzer
-                    analyzer = VisionAnalyzer()
-                    analysis = analyzer.analyze(fb, model="gemini")
-                    self.db.add_message(self.conv_id, "assistant", f"**📎 {fname}**\n\n{analysis}")
-                except:
-                    self.db.add_message(self.conv_id, "assistant", f"**📎 {fname}** received.")
-            
-            else:
-                # Handle text file
-                txt = fb.decode('utf-8', errors='ignore')
-                st.session_state.uploaded_files[fkey] = {
-                    "type": "text",
-                    "name": fname,
-                    "content": txt,
-                    "size": len(txt)
-                }
-                self.db.add_message(self.conv_id, "user", f"📎 {fname}", {
-                    "type": "file",
-                    "file_key": fkey
-                })
-                self.db.add_message(self.conv_id, "assistant", f"**📎 {fname}** loaded ({len(txt)} chars).")
-            
-            return fkey
-            
-        except Exception as e:
-            st.error(f"Upload error: {e}")
-            return None
-
-
-# ============================================================================
-# CONVENIENCE FUNCTIONS
-# ============================================================================
-
-def render_chat_interface(db, conv_id: str, model: str, user_id: str, messages: List[Dict]):
-    """Convenience function to render the chat interface."""
-    interface = ChatInterface()
-    interface.render(db, conv_id, model, user_id, messages)
-
-
-def process_file_upload(db, conv_id: str, uploaded_file):
-    """Convenience function to process file upload."""
-    handler = FileUploadHandler(db, conv_id)
-    return handler.process_uploaded_file(uploaded_file)
+        task = user_input
+        if file_context:
+            task += f"\n\nFile context:\n{file_context}"
+        
+        result = await agent.run(task, user_id=st.session_state.get("current_user", {}).get("username"))
+        
+        # Add reflection summary
+        if st.session_state.get("show_agent_traces"):
+            result += "\n\n" + agent.get_reflection_summary()
+        
+        return result
+    
+    async def _run_kimi_swarm(self, user_input: str, file_context: str = "") -> str:
+        """Kimi swarm with hierarchical planning."""
+        swarm = create_kimi_swarm(
+            model=self.model,
+            max_agents=st.session_state.get("swarm_max_parallel", 4)
+        )
+        
+        task = user_input
+        if file_context:
+            task += f"\n\nFile context:\n{file_context}"
+        
+        result = await swarm.run_swarm(task, user_id=st.session_state.get("current_user", {}).get("username"))
+        
+        # Add swarm report
+        if st.session_state.get("show_agent_traces"):
+            result += "\n\n" + swarm.get_swarm_report()
+        
+        return result

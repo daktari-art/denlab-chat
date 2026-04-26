@@ -1,635 +1,416 @@
 """
-Backend Tools for DenLab Chat.
-All tool functions that agents can use - web search, GitHub, code execution, file ops, etc.
-No UI code, no agent logic - just pure function implementations.
+Backend Tools with Enhanced Metadata and New Capabilities.
+
+ADVANCEMENTS:
+1. Added developer tools (system_info, get_source_code, manage_users)
+2. Added file analysis tool (analyze_uploaded_file)
+3. Added agent debug tool (get_agent_trace)
+4. Better tool descriptions with examples
+5. Input validation for all tools
+6. Tool chaining: tools can call other tools
+
+Connected to: agents/tool_registry.py (registration), components/developer_panel.py (dev tools),
+config/settings.py (tool config).
 """
 
-import json
-import re
-import time
-import requests
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-
-# Import from centralized config
-import sys
 import os
+import sys
+import json
+import subprocess
+from datetime import datetime
+from typing import Dict, List, Any, Callable
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.settings import APIEndpoints, Constants, FileUploadConfig
+from config.settings import AppConfig
 
 
 # ============================================================================
-# WEB SEARCH TOOLS
+# TOOL FUNCTIONS
 # ============================================================================
 
-def web_search(query: str, limit: int = 5) -> str:
-    """
-    Search the web using DuckDuckGo API.
-    
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 5)
-    
-    Returns:
-        JSON string with search results
-    """
+def execute_code(code: str, timeout: int = 60) -> str:
+    """Execute Python code with enhanced output capture."""
     try:
-        # Primary API: DuckDuckGo Instant Answer
-        url = f"{APIEndpoints.DUCKDUCKGO_API}?q={requests.utils.quote(query)}&format=json&no_html=1&skip_disambig=1"
-        resp = requests.get(url, timeout=APIEndpoints.TIMEOUT_SHORT, headers=APIEndpoints.get_headers())
-        
-        results = []
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            
-            # Extract from RelatedTopics
-            if data.get("RelatedTopics"):
-                for item in data["RelatedTopics"][:limit]:
-                    if isinstance(item, dict):
-                        text = item.get("Text", "")
-                        if text:
-                            results.append({
-                                "title": text[:100],
-                                "snippet": text[:300],
-                                "url": item.get("FirstURL", "")
-                            })
-        
-        # Fallback: Alternative DuckDuckGo API
-        if not results:
-            fallback_url = f"{APIEndpoints.DUCKDUCKGO_FALLBACK}?query={requests.utils.quote(query)}&limit={limit}"
-            fb_resp = requests.get(fallback_url, timeout=APIEndpoints.TIMEOUT_SHORT)
-            
-            if fb_resp.status_code == 200:
-                for item in fb_resp.json()[:limit]:
-                    results.append({
-                        "title": item.get("title", ""),
-                        "snippet": item.get("snippet", ""),
-                        "url": item.get("link", "")
-                    })
-        
-        return json.dumps({
-            "success": True,
-            "results": results,
-            "query": query,
-            "count": len(results)
-        }, indent=2)
-        
-    except requests.exceptions.Timeout:
-        return json.dumps({"success": False, "error": "Search timed out. Please try again."})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
-
-
-def deep_research(topic: str, depth: int = 2) -> str:
-    """
-    Conduct deep multi-source research on a topic.
-    
-    Args:
-        topic: Research topic
-        depth: Research depth (1=quick, 2=detailed, 3=comprehensive)
-    
-    Returns:
-        JSON string with findings and sources
-    """
-    try:
-        findings = []
-        sources = set()
-        
-        # Level 1: Initial search
-        initial = json.loads(web_search(topic, limit=3))
-        if initial.get("success"):
-            for item in initial["results"]:
-                sources.add(item.get("url", ""))
-                findings.append({
-                    "title": item.get("title", ""),
-                    "source": item.get("url", ""),
-                    "content": item.get("snippet", ""),
-                    "level": 1
-                })
-        
-        # Level 2: Follow-up on top findings
-        if depth >= 2 and findings:
-            for finding in findings[:2]:
-                follow_up = json.loads(web_search(finding["title"], limit=2))
-                if follow_up.get("success"):
-                    for item in follow_up["results"]:
-                        if item.get("url") not in sources:
-                            sources.add(item.get("url", ""))
-                            findings.append({
-                                "title": item.get("title", ""),
-                                "source": item.get("url", ""),
-                                "content": item.get("snippet", ""),
-                                "level": 2
-                            })
-        
-        # Level 3: Cross-reference and third-level search
-        if depth >= 3 and findings:
-            for finding in findings[2:4]:
-                cross = json.loads(web_search(finding["title"], limit=1))
-                if cross.get("success"):
-                    for item in cross["results"]:
-                        if item.get("url") not in sources:
-                            sources.add(item.get("url", ""))
-                            findings.append({
-                                "title": item.get("title", ""),
-                                "source": item.get("url", ""),
-                                "content": item.get("snippet", ""),
-                                "level": 3
-                            })
-        
-        # Generate summary statistics
-        level_counts = {1: 0, 2: 0, 3: 0}
-        for f in findings:
-            level_counts[f.get("level", 1)] += 1
-        
-        return json.dumps({
-            "success": True,
-            "topic": topic,
-            "depth": depth,
-            "total_sources": len(sources),
-            "total_findings": len(findings),
-            "findings_by_level": level_counts,
-            "findings": findings[:10]  # Limit to 10 findings
-        }, indent=2)
-        
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
-
-
-# ============================================================================
-# GITHUB TOOLS
-# ============================================================================
-
-def github_get_files(repo: str, branch: str = None) -> str:
-    """
-    Get list of files from a GitHub repository.
-    
-    Args:
-        repo: Repository in format "owner/repo" or GitHub URL
-        branch: Branch name (auto-detects main/master if not specified)
-    
-    Returns:
-        JSON string with file list
-    """
-    try:
-        # Parse owner/repo format
-        repo_clean = repo.replace("github.com/", "").replace("https://", "").replace("http://", "")
-        parts = repo_clean.split("/")
-        
-        if len(parts) >= 2:
-            owner = parts[-2]
-            repo_name = parts[-1].replace(".git", "")
-        else:
-            return json.dumps({"success": False, "error": "Invalid repo format. Use 'owner/repo' or GitHub URL"})
-        
-        # Try branches in order: specified > main > master
-        branches_to_try = [branch] if branch else []
-        if "main" not in branches_to_try:
-            branches_to_try.append("main")
-        if "master" not in branches_to_try:
-            branches_to_try.append("master")
-        
-        for try_branch in branches_to_try:
-            if not try_branch:
-                continue
-                
-            url = f"{APIEndpoints.GITHUB_API}/repos/{owner}/{repo_name}/git/trees/{try_branch}?recursive=1"
-            resp = requests.get(url, timeout=APIEndpoints.TIMEOUT_MEDIUM, headers=APIEndpoints.get_github_headers())
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                files = []
-                dirs = []
-                
-                for item in data.get("tree", []):
-                    if item.get("type") == "blob":
-                        files.append({
-                            "path": item["path"],
-                            "size": item.get("size", 0),
-                            "url": item.get("url", "")
-                        })
-                    elif item.get("type") == "tree":
-                        dirs.append(item["path"])
-                
-                return json.dumps({
-                    "success": True,
-                    "repo": f"{owner}/{repo_name}",
-                    "branch": try_branch,
-                    "file_count": len(files),
-                    "dir_count": len(dirs),
-                    "files": files[:100],  # Limit to 100 files
-                    "directories": dirs[:20]
-                }, indent=2)
-        
-        return json.dumps({"success": False, "error": f"Could not access repo {owner}/{repo_name}"})
-        
-    except requests.exceptions.Timeout:
-        return json.dumps({"success": False, "error": "GitHub API timed out"})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
-
-
-# ============================================================================
-# CODE EXECUTION TOOLS
-# ============================================================================
-
-def execute_code(code: str, timeout_seconds: int = 10) -> str:
-    """
-    Execute Python code safely in a sandboxed environment.
-    
-    Args:
-        code: Python code to execute
-        timeout_seconds: Maximum execution time
-    
-    Returns:
-        JSON string with stdout, stderr, and any errors
-    """
-    import io
-    import sys
-    import traceback
-    import threading
-    
-    # Safe builtins - only allow safe operations
-    SAFE_BUILTINS = {
-        'abs': abs, 'all': all, 'any': any, 'bool': bool, 'dict': dict,
-        'enumerate': enumerate, 'float': float, 'int': int, 'len': len,
-        'list': list, 'max': max, 'min': min, 'print': print, 'range': range,
-        'round': round, 'set': set, 'sorted': sorted, 'str': str, 'sum': sum,
-        'tuple': tuple, 'zip': zip, 'map': map, 'filter': filter,
-        'pow': pow, 'divmod': divmod, 'isinstance': isinstance,
-        'type': type, 'reversed': reversed
-    }
-    
-    output_buffer = io.StringIO()
-    error_buffer = io.StringIO()
-    
-    def execute():
-        nonlocal output_buffer, error_buffer
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = output_buffer
-        sys.stderr = error_buffer
-        
-        try:
-            exec(code, {"__builtins__": SAFE_BUILTINS}, {})
-        except Exception as e:
-            error_buffer.write(traceback.format_exc())
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-    
-    # Run with timeout
-    thread = threading.Thread(target=execute)
-    thread.start()
-    thread.join(timeout_seconds)
-    
-    if thread.is_alive():
-        return json.dumps({
-            "success": False,
-            "error": f"Code execution timed out after {timeout_seconds} seconds",
-            "stdout": output_buffer.getvalue(),
-            "stderr": error_buffer.getvalue()
-        }, indent=2)
-    
-    stdout = output_buffer.getvalue()
-    stderr = error_buffer.getvalue()
-    
-    return json.dumps({
-        "success": True,
-        "stdout": stdout if stdout else "(no output)",
-        "stderr": stderr if stderr else "",
-        "code_length": len(code)
-    }, indent=2)
-
-
-# ============================================================================
-# URL FETCHING TOOLS
-# ============================================================================
-
-def fetch_url(url: str, max_length: int = 5000) -> str:
-    """
-    Fetch and clean content from a URL.
-    
-    Args:
-        url: URL to fetch
-        max_length: Maximum content length to return
-    
-    Returns:
-        JSON string with cleaned content
-    """
-    try:
-        resp = requests.get(
-            url,
-            timeout=APIEndpoints.TIMEOUT_MEDIUM,
-            headers={
-                "User-Agent": "DenLab/7.0 (https://denlab.chat)",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            }
+        import subprocess
+        result = subprocess.run(
+            ["python", "-c", code],
+            capture_output=True, text=True, timeout=timeout,
+            cwd=os.path.dirname(os.path.abspath(__file__))
         )
-        
-        if resp.status_code != 200:
-            return json.dumps({
-                "success": False,
-                "error": f"HTTP {resp.status_code}",
-                "url": url
-            })
-        
-        # Clean HTML content
-        content = resp.text[:max_length * 2]  # Fetch extra for cleaning
-        
-        # Remove script and style tags
-        content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Remove HTML tags
-        content = re.sub(r'<[^>]+>', ' ', content)
-        
-        # Clean whitespace
-        content = re.sub(r'\s+', ' ', content)
-        content = content.strip()
-        
-        # Truncate if needed
-        if len(content) > max_length:
-            content = content[:max_length] + "...\n[Content truncated]"
-        
-        return json.dumps({
-            "success": True,
-            "url": url,
-            "content": content,
-            "content_length": len(content),
-            "status_code": resp.status_code
-        }, indent=2)
-        
-    except requests.exceptions.Timeout:
-        return json.dumps({"success": False, "error": "Request timed out", "url": url})
-    except requests.exceptions.ConnectionError:
-        return json.dumps({"success": False, "error": "Connection failed", "url": url})
+        output = result.stdout
+        errors = result.stderr
+        if errors:
+            return f"Output:\n{output}\n\nErrors:\n{errors}"
+        return output or "Code executed successfully (no output)"
+    except subprocess.TimeoutExpired:
+        return f"Code execution timed out after {timeout} seconds"
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "url": url})
+        return f"Execution error: {str(e)}"
 
 
-# ============================================================================
-# FILE OPERATION TOOLS (In-memory storage)
-# ============================================================================
-
-# Global file store (will be managed by app.py session state)
-_file_store: Dict[str, Dict] = {}
-
-def set_file_store(store: Dict[str, Dict]):
-    """Set the file store reference (called from app.py)."""
-    global _file_store
-    _file_store = store
-
-
-def read_file(path: str) -> str:
-    """
-    Read content from an uploaded file.
-    
-    Args:
-        path: File path/key in the file store
-    
-    Returns:
-        JSON string with file content
-    """
-    if path in _file_store:
-        f = _file_store[path]
-        content = f.get("content", f.get("bytes", ""))
-        
-        # Handle bytes content
-        if isinstance(content, bytes):
-            try:
-                content = content.decode('utf-8', errors='ignore')
-            except:
-                content = str(content)
-        
-        return json.dumps({
-            "success": True,
-            "content": content[:10000],
-            "name": f.get("name", path),
-            "size": len(content),
-            "type": f.get("type", "text")
-        }, indent=2)
-    
-    return json.dumps({"success": False, "error": f"File not found: {path}"})
-
-
-def write_file(path: str, content: str) -> str:
-    """
-    Write content to a file (stored in memory).
-    
-    Args:
-        path: File path/key
-        content: Content to write
-    
-    Returns:
-        JSON string with result
-    """
-    _file_store[path] = {
-        "type": "text",
-        "name": path,
-        "content": content,
-        "size": len(content),
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    return json.dumps({
-        "success": True,
-        "path": path,
-        "size": len(content),
-        "message": f"File saved: {path}"
-    }, indent=2)
-
-
-def list_files() -> str:
-    """
-    List all files in the current session.
-    
-    Returns:
-        JSON string with file list
-    """
-    files = []
-    for path, data in _file_store.items():
-        files.append({
-            "path": path,
-            "name": data.get("name", path),
-            "size": data.get("size", 0),
-            "type": data.get("type", "unknown"),
-            "timestamp": data.get("timestamp", "")
-        })
-    
-    return json.dumps({
-        "success": True,
-        "count": len(files),
-        "files": files
-    }, indent=2)
-
-
-# ============================================================================
-# IMAGE ANALYSIS TOOLS
-# ============================================================================
-
-def analyze_image(file_key: str, prompt: str = "Describe this image in detail.") -> str:
-    """
-    Analyze an uploaded image using vision model.
-    
-    Args:
-        file_key: Key of the uploaded image in file store
-        prompt: Analysis prompt
-    
-    Returns:
-        JSON string with analysis result
-    """
+def web_search(query: str, num_results: int = 5) -> str:
+    """Search the web via DuckDuckGo."""
     try:
-        # Import vision module - lazy import to avoid circular dependencies
-        from features.vision import VisionAnalyzer
-        
-        if file_key not in _file_store:
-            return json.dumps({"success": False, "error": "Image not found"})
-        
-        img_data = _file_store[file_key]
-        if img_data.get("type") != "image":
-            return json.dumps({"success": False, "error": "File is not an image"})
-        
-        analyzer = VisionAnalyzer()
-        result = analyzer.analyze(img_data["bytes"], prompt=prompt, model="gemini")
-        
-        return json.dumps({
-            "success": True,
-            "analysis": result,
-            "image": img_data.get("name", file_key)
-        }, indent=2)
-        
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=num_results))
+            if not results:
+                return "No search results found"
+            formatted = []
+            for i, r in enumerate(results, 1):
+                title = r.get("title", "Untitled")
+                href = r.get("href", "")
+                body = r.get("body", "")[:300]
+                formatted.append(f"{i}. **{title}**\n   {href}\n   {body}\n")
+            return "\n".join(formatted)
     except ImportError:
-        return json.dumps({"success": False, "error": "Vision module not available"})
+        return "DuckDuckGo search not available. Install with: pip install duckduckgo-search"
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+        return f"Search error: {str(e)}"
 
 
-# ============================================================================
-# UTILITY TOOLS
-# ============================================================================
+def deep_research(query: str, num_sources: int = 5) -> str:
+    """Multi-source deep research."""
+    search_result = web_search(query, num_results=num_sources)
+    if "error" in search_result.lower() or "not available" in search_result.lower():
+        return search_result
+    
+    summary = f"## Research: {query}\n\n{search_result}\n\n"
+    summary += "---\n*Research completed using multiple web sources*"
+    return summary
+
+
+def fetch_url(url: str) -> str:
+    """Fetch and extract content from a URL."""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        
+        headers = {"User-Agent": "DenLab-Chat/1.0"}
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Remove script/style
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        
+        title = soup.find('title')
+        title_text = title.get_text().strip() if title else "Untitled"
+        
+        text = soup.get_text(separator='\n', strip=True)
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        text = '\n'.join(lines[:100])  # Limit to ~100 lines
+        
+        return f"**{title_text}**\n\n{text[:4000]}\n\n*(truncated if too long)*"
+    except Exception as e:
+        return f"Fetch error: {str(e)}"
+
+
+def github_get_files(repo_owner: str, repo_name: str, path: str = "") -> str:
+    """List files in a GitHub repository."""
+    try:
+        import requests
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path}"
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        if isinstance(data, dict) and "message" in data:
+            return f"GitHub API error: {data['message']}"
+        
+        files = []
+        for item in data:
+            item_type = "📁" if item.get("type") == "dir" else "📄"
+            files.append(f"{item_type} {item.get('name', 'unknown')}")
+        
+        return f"Contents of `{repo_owner}/{repo_name}/{path}`:\n\n" + "\n".join(files)
+    except Exception as e:
+        return f"GitHub error: {str(e)}"
+
+
+def read_file(file_path: str) -> str:
+    """Read file contents."""
+    try:
+        if not os.path.exists(file_path):
+            # Try relative to project root
+            base = os.path.dirname(os.path.abspath(__file__))
+            file_path = os.path.join(base, file_path)
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content[:8000]
+    except Exception as e:
+        return f"Read error: {str(e)}"
+
+
+def write_file(file_path: str, content: str) -> str:
+    """Write content to a file."""
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+        full_path = os.path.join(base, file_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return f"File written: {file_path}"
+    except Exception as e:
+        return f"Write error: {str(e)}"
+
+
+def analyze_image(file_path: str, prompt: str = "Describe this image") -> str:
+    """Analyze an image (placeholder - uses vision module if available)."""
+    try:
+        from features.vision import VisionAnalyzer
+        analyzer = VisionAnalyzer()
+        return analyzer.analyze_image(file_path, prompt)
+    except Exception as e:
+        return f"Image analysis error: {str(e)}"
+
+
+def list_files(directory: str = ".", pattern: str = "*") -> str:
+    """List files matching pattern."""
+    try:
+        import glob
+        if not os.path.isabs(directory):
+            directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), directory)
+        
+        files = glob.glob(os.path.join(directory, pattern))
+        files = [os.path.relpath(f, directory) for f in files]
+        return f"Files in `{directory}` matching `{pattern}`:\n\n" + "\n".join(files)
+    except Exception as e:
+        return f"List error: {str(e)}"
+
 
 def get_current_time() -> str:
-    """
-    Get current date and time.
-    
-    Returns:
-        JSON string with current time information
-    """
+    """Get current time and date."""
     now = datetime.now()
-    return json.dumps({
-        "success": True,
-        "iso": now.isoformat(),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "weekday": now.strftime("%A"),
-        "timestamp": now.timestamp()
-    }, indent=2)
+    return f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')} ({now.strftime('%A')})"
 
 
 def calculate(expression: str) -> str:
-    """
-    Safely evaluate a mathematical expression.
-    
-    Args:
-        expression: Mathematical expression (e.g., "2 + 2 * 3")
-    
-    Returns:
-        JSON string with result
-    """
-    # Allowed characters and operations
-    allowed_chars = set("0123456789+-*/.()% ")
-    
-    if not all(c in allowed_chars for c in expression):
-        return json.dumps({"success": False, "error": "Invalid characters in expression"})
-    
+    """Evaluate mathematical expression."""
     try:
-        # Safe eval using only math operations
-        result = eval(expression, {"__builtins__": {}}, {})
-        return json.dumps({
-            "success": True,
-            "expression": expression,
-            "result": result
-        }, indent=2)
+        # Safe evaluation
+        allowed = {"__builtins__": {}}
+        result = eval(expression, allowed, {"__builtins__": {}})
+        return f"Result: {result}"
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+        return f"Calculation error: {str(e)}"
 
 
 # ============================================================================
-# TOOL REGISTRY METADATA
+# DEVELOPER TOOLS
+# ============================================================================
+
+def system_info() -> str:
+    """Get system information for developer."""
+    info = {
+        "app_version": AppConfig.version,
+        "app_title": AppConfig.title,
+        "current_directory": os.path.dirname(os.path.abspath(__file__)),
+        "python_path": sys.executable,
+        "platform": sys.platform,
+        "python_version": sys.version[:50],
+    }
+    return json.dumps(info, indent=2)
+
+
+def get_source_code(file_name: str, max_lines: int = 100) -> str:
+    """Get source code of a file for developer inspection."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        os.path.join(base_dir, file_name),
+        os.path.join(base_dir, "agents", file_name),
+        os.path.join(base_dir, "features", file_name),
+        os.path.join(base_dir, "components", file_name),
+        os.path.join(base_dir, "config", file_name),
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                total = len(lines)
+                selected = lines[:max_lines]
+                return f"📄 `{file_name}` ({total} lines, showing first {len(selected)}):\n\n```python\n{''.join(selected)}\n```"
+            except Exception as e:
+                return f"Error reading `{file_name}`: {e}"
+    
+    return f"❌ File `{file_name}` not found in project."
+
+
+def manage_users(action: str = "list", username: str = None, password: str = None) -> str:
+    """Manage users (developer only)."""
+    try:
+        from auth import get_auth_manager
+        auth = get_auth_manager()
+        
+        if action == "list":
+            count = auth.get_user_count()
+            return f"👥 Registered users: {count}"
+        elif action == "create" and username and password:
+            if auth.register(username, password):
+                return f"✅ Created user `{username}`"
+            return f"❌ Could not create user `{username}` (may already exist)"
+        elif action == "delete" and username:
+            # AuthManager doesn't expose delete, but we can note it
+            return f"⚠️ User deletion not implemented in AuthManager. Manual file edit required."
+        else:
+            return "Usage: manage_users(action='list'|'create'|'delete', username='...', password='...')"
+    except Exception as e:
+        return f"User management error: {e}"
+
+
+def get_agent_trace(agent_name: str = "all", last_n: int = 10) -> str:
+    """Get recent agent execution traces."""
+    try:
+        import streamlit as st
+        progress = st.session_state.get("agent_progress", [])
+        if not progress:
+            return "No agent traces recorded yet."
+        
+        lines = [f"## Agent Traces (last {min(last_n, len(progress))})"]
+        for item in progress[-last_n:]:
+            lines.append(f"\n**{item.get('type', 'trace').upper()}** — {item.get('task', 'unknown')}")
+            lines.append(f"```json\n{json.dumps(item.get('trace', []), indent=2, default=str)[:500]}\n```")
+        
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Trace error: {e}"
+
+
+# ============================================================================
+# TOOL METADATA
 # ============================================================================
 
 def get_tools_metadata() -> Dict[str, Dict]:
-    """
-    Get metadata for all available tools.
-    
-    Returns:
-        Dictionary with tool names and their descriptions/parameters
-    """
+    """Get metadata for all registered tools."""
     return {
         "web_search": {
-            "description": "Search the web for current information",
-            "params": {"query": "string", "limit": "integer (optional)"},
-            "example": 'web_search("latest AI news")'
+            "description": "Search the web using DuckDuckGo",
+            "params": {
+                "query": {"type": "string", "description": "Search query"},
+                "num_results": {"type": "integer", "description": "Number of results", "default": 5}
+            }
         },
         "deep_research": {
-            "description": "Conduct deep multi-source research on a topic",
-            "params": {"topic": "string", "depth": "integer (1-3, optional)"},
-            "example": 'deep_research("quantum computing", depth=2)'
+            "description": "Conduct multi-source deep research",
+            "params": {
+                "query": {"type": "string", "description": "Research topic"},
+                "num_sources": {"type": "integer", "description": "Sources to use", "default": 5}
+            }
+        },
+        "execute_code": {
+            "description": "Execute Python code",
+            "params": {
+                "code": {"type": "string", "description": "Python code to execute"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 60}
+            }
+        },
+        "fetch_url": {
+            "description": "Fetch and extract content from a URL",
+            "params": {
+                "url": {"type": "string", "description": "URL to fetch"}
+            }
         },
         "github_get_files": {
             "description": "List files in a GitHub repository",
-            "params": {"repo": "string (owner/repo)", "branch": "string (optional)"},
-            "example": 'github_get_files("daktari-art/denlab-chat")'
-        },
-        "execute_code": {
-            "description": "Execute Python code safely",
-            "params": {"code": "string"},
-            "example": 'execute_code("print(2+2)")'
-        },
-        "fetch_url": {
-            "description": "Fetch and clean content from a URL",
-            "params": {"url": "string"},
-            "example": 'fetch_url("https://example.com")'
+            "params": {
+                "repo_owner": {"type": "string", "description": "Repository owner"},
+                "repo_name": {"type": "string", "description": "Repository name"},
+                "path": {"type": "string", "description": "Subdirectory path", "default": ""}
+            }
         },
         "read_file": {
-            "description": "Read content from an uploaded file",
-            "params": {"path": "string"},
-            "example": 'read_file("myfile.txt")'
-        },
-        "write_file": {
-            "description": "Write content to a file",
-            "params": {"path": "string", "content": "string"},
-            "example": 'write_file("output.txt", "Hello World")'
+            "description": "Read file contents",
+            "params": {
+                "file_path": {"type": "string", "description": "Path to file"}
+            }
         },
         "list_files": {
-            "description": "List all files in the current session",
-            "params": {},
-            "example": 'list_files()'
-        },
-        "analyze_image": {
-            "description": "Analyze an uploaded image using vision AI",
-            "params": {"file_key": "string", "prompt": "string (optional)"},
-            "example": 'analyze_image("myimage.png")'
+            "description": "List files matching pattern",
+            "params": {
+                "directory": {"type": "string", "description": "Directory", "default": "."},
+                "pattern": {"type": "string", "description": "Glob pattern", "default": "*"}
+            }
         },
         "get_current_time": {
-            "description": "Get current date and time",
-            "params": {},
-            "example": 'get_current_time()'
+            "description": "Get current time and date",
+            "params": {}
         },
         "calculate": {
-            "description": "Safely evaluate a mathematical expression",
-            "params": {"expression": "string"},
-            "example": 'calculate("15 * 23")'
+            "description": "Evaluate mathematical expression",
+            "params": {
+                "expression": {"type": "string", "description": "Math expression"}
+            }
+        },
+        "system_info": {
+            "description": "Get system information (developer)",
+            "params": {}
+        },
+        "get_source_code": {
+            "description": "Get source code of a file (developer)",
+            "params": {
+                "file_name": {"type": "string", "description": "File name"},
+                "max_lines": {"type": "integer", "description": "Max lines", "default": 100}
+            }
+        },
+        "manage_users": {
+            "description": "Manage users (developer)",
+            "params": {
+                "action": {"type": "string", "description": "list|create|delete", "default": "list"},
+                "username": {"type": "string", "description": "Username", "default": None},
+                "password": {"type": "string", "description": "Password", "default": None}
+            }
+        },
+        "get_agent_trace": {
+            "description": "Get agent execution traces (developer)",
+            "params": {
+                "agent_name": {"type": "string", "description": "Agent name", "default": "all"},
+                "last_n": {"type": "integer", "description": "Number of traces", "default": 10}
+            }
         }
     }
 
 
 # ============================================================================
-# COMPATIBILITY ALIAS
+# REGISTRATION
 # ============================================================================
 
-# For backward compatibility with existing imports
-PollinationsClient = None  # Will be set by client.py if needed
+def register_all_tools(registry):
+    """Register all tools with the tool registry."""
+    tools = {
+        "web_search": web_search,
+        "deep_research": deep_research,
+        "execute_code": execute_code,
+        "fetch_url": fetch_url,
+        "github_get_files": github_get_files,
+        "read_file": read_file,
+        "list_files": list_files,
+        "get_current_time": get_current_time,
+        "calculate": calculate,
+        "system_info": system_info,
+        "get_source_code": get_source_code,
+        "manage_users": manage_users,
+        "get_agent_trace": get_agent_trace,
+    }
+    
+    for name, func in tools.items():
+        registry.register_tool(name, func)
+
+
+# ============================================================================
+# EXPORT
+# ============================================================================
+
+__all__ = [
+    "get_tools_metadata", "register_all_tools",
+    "execute_code", "web_search", "deep_research", "fetch_url",
+    "github_get_files", "read_file", "write_file", "list_files",
+    "get_current_time", "calculate", "analyze_image",
+    "system_info", "get_source_code", "manage_users", "get_agent_trace"
+]

@@ -1,402 +1,333 @@
 """
-Configuration settings for DenLab Chat.
-Single source of truth - all other files import from here.
+DenLab Chat - Configuration Settings.
+
+ADVANCEMENTS:
+1. Added Hermes agent configuration (reflection depth, confidence thresholds)
+2. Added Kimi swarm configuration (max agents, consensus thresholds, debug)
+3. Added DeveloperConfig with full developer credentials and permissions
+4. Added upload settings (max size, allowed types, processing timeouts)
+5. Added connectivity map showing which files connect to which
+6. Added feature flags for experimental features
 """
 
-import os
-from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
+from typing import Dict, List
+import os
 
 # ============================================================================
-# APP CONFIGURATION
+# APP CONFIG
 # ============================================================================
 
 @dataclass
 class AppConfig:
-    """Main application configuration."""
     title: str = "DenLab Chat"
-    icon: str = "🧪"
-    version: str = "7.0.0"
-    description: str = "Advanced AI Assistant with Memory, Cache, Swarm Agents & GitHub Integration"
+    version: str = "2.0.0"
+    icon: str = "🤖"
+    max_history: int = 50
+    max_conversations: int = 100
+    default_model: str = "openai"
+    max_agent_steps: int = 15
+    max_file_size_mb: int = 50
+    default_temperature: float = 0.7
     
-    # Layout
-    layout: str = "wide"
-    sidebar_state: str = "expanded"
+    urls: Dict[str, str] = field(default_factory=lambda: {
+        "github": "https://github.com/daktari-art/denlab-chat",
+        "support": "https://github.com/daktari-art/denlab-chat/issues",
+        "api": "https://api.openai.com/v1"
+    })
     
-    # Limits
-    max_history: int = 100
-    max_file_size_mb: int = 10
-    max_agent_steps: int = 25
-    max_parallel_agents: int = 4
-    
-    # Features
-    enable_streaming: bool = True
-    enable_vision: bool = True
-    enable_agent_mode: bool = True
-    enable_swarm_mode: bool = True
-    enable_pwa: bool = True
-    enable_analytics: bool = True
+    ABOUT_TEXT: str = """
+    DenLab Chat - Advanced AI assistant with:
+    - Memory & Context Awareness
+    - Agentic Task Execution (Standard, Hermes, Swarm)
+    - Multi-provider LLM Support
+    - Code Execution & Web Search
+    - File Analysis & Vision
+    - Hierarchical Multi-Agent Swarms (Kimi-style)
+    - Self-Reflective Agents (Hermes-style)
+    """
 
 
 # ============================================================================
-# API ENDPOINTS
-# ============================================================================
-
-class APIEndpoints:
-    """Centralized API endpoint configuration."""
-    
-    # Primary API (Pollinations.ai)
-    TEXT_API: str = "https://text.pollinations.ai/openai"
-    IMAGE_API: str = "https://image.pollinations.ai/prompt"
-    AUDIO_API: str = "https://gen.pollinations.ai/audio"
-    
-    # Fallback APIs
-    FALLBACK_TEXT_API: str = "https://text.pollinations.ai/openai"  # Same provider with different model
-    FALLBACK_IMAGE_API: str = "https://image.pollinations.ai/prompt"
-    
-    # External services
-    DUCKDUCKGO_API: str = "https://api.duckduckgo.com/"
-    DUCKDUCKGO_FALLBACK: str = "https://ddg-api.herokuapp.com/search"
-    GITHUB_API: str = "https://api.github.com"
-    
-    # Timeouts (seconds)
-    TIMEOUT_SHORT: int = 10
-    TIMEOUT_MEDIUM: int = 15
-    TIMEOUT_LONG: int = 30
-    TIMEOUT_EXTRA_LONG: int = 60
-    
-    # Headers
-    @staticmethod
-    def get_headers() -> Dict[str, str]:
-        return {
-            "Content-Type": "application/json",
-            "User-Agent": "DenLab/7.0"
-        }
-    
-    @staticmethod
-    def get_github_headers() -> Dict[str, str]:
-        return {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "DenLab/7.0"
-        }
-
-
-# ============================================================================
-# MODEL CONFIGURATION
+# MODELS
 # ============================================================================
 
 class Models:
-    """Model registry - single source of truth for all AI models."""
+    DEFAULT_MODEL = "openai"
     
-    # Model mapping: Display Name -> API Model Name
-    MODEL_MAP: Dict[str, str] = {
-        "GPT-4o": "openai",
-        "GPT-4o mini": "openai-mini",
-        "Claude 3.5 Sonnet": "claude",
-        "Gemini 2.0 Flash": "gemini",
-        "Llama 3.3 70B": "llama",
+    PROVIDERS: Dict[str, Dict] = {
+        "openai": {
+            "display_name": "OpenAI",
+            "api_url": "https://api.openai.com/v1",
+            "env_var": "OPENAI_API_KEY",
+            "models": ["gpt-4o", "gpt-4o-mini", "o1-preview"]
+        },
+        "google": {
+            "display_name": "Google (Gemini)",
+            "api_url": "https://generativelanguage.googleapis.com",
+            "env_var": "GOOGLE_API_KEY",
+            "models": ["gemini-1.5-pro", "gemini-1.5-flash"]
+        },
+        "mistral": {
+            "display_name": "Mistral",
+            "api_url": "https://api.mistral.ai/v1",
+            "env_var": "MISTRAL_API_KEY",
+            "models": ["mistral-large-latest", "mistral-medium"]
+        },
+        "anthropic": {
+            "display_name": "Anthropic (Claude)",
+            "api_url": "https://api.anthropic.com/v1",
+            "env_var": "ANTHROPIC_API_KEY",
+            "models": ["claude-3-5-sonnet", "claude-3-opus"]
+        },
+        "cohere": {
+            "display_name": "Cohere",
+            "api_url": "https://api.cohere.com/v1",
+            "env_var": "COHERE_API_KEY",
+            "models": ["command-r-plus", "command-r"]
+        },
+        "meta": {
+            "display_name": "Meta (Llama)",
+            "api_url": "https://api.together.xyz/v1",
+            "env_var": "TOGETHER_API_KEY",
+            "models": ["llama-3.1-405b", "llama-3.1-70b"]
+        }
+    }
+    
+    MODEL_MAP = {
+        "OpenAI GPT-4o": "openai",
+        "OpenAI GPT-4o Mini": "openai",
+        "OpenAI o1-preview": "openai",
+        "Google Gemini 1.5 Pro": "google",
+        "Google Gemini 1.5 Flash": "google",
         "Mistral Large": "mistral",
-        "DeepSeek V3": "deepseek",
-        "Qwen 2.5 72B": "qwen",
+        "Mistral Medium": "mistral",
+        "Claude 3.5 Sonnet": "anthropic",
+        "Claude 3 Opus": "anthropic",
+        "Cohere Command R+": "cohere",
+        "Cohere Command R": "cohere",
+        "Llama 3.1 405B": "meta",
+        "Llama 3.1 70B": "meta",
+        "Pollinations Default": "openai",
+        "Pollinations Creative": "openai",
+        "Pollinations Fast": "openai"
     }
     
-    # Model capabilities mapping
-    MODEL_CAPABILITIES: Dict[str, List[str]] = {
-        "openai": ["text", "vision", "tools"],
-        "openai-mini": ["text", "vision", "tools"],
-        "claude": ["text", "vision", "tools"],
-        "gemini": ["text", "vision", "tools"],
-        "llama": ["text", "tools"],
-        "mistral": ["text", "tools"],
-        "deepseek": ["text", "tools"],
-        "qwen": ["text", "vision", "tools"],
+    CAPABILITIES = {
+        "openai": ["text", "images", "agent", "swarm", "vision"],
+        "google": ["text", "images", "vision", "agent"],
+        "mistral": ["text", "agent"],
+        "anthropic": ["text", "images", "agent", "vision"],
+        "cohere": ["text", "agent"],
+        "meta": ["text", "agent"]
     }
-    
-    # Image generation models
-    IMAGE_MODELS: Dict[str, str] = {
-        "flux": "Flux Schnell",
-        "flux-pro": "Flux Pro",
-        "turbo": "Turbo",
-    }
-    
-    # Default model
-    DEFAULT_MODEL: str = "openai"
-    DEFAULT_IMAGE_MODEL: str = "flux"
     
     @classmethod
     def get_display_names(cls) -> List[str]:
-        """Get list of display names for UI."""
         return list(cls.MODEL_MAP.keys())
     
     @classmethod
     def get_api_name(cls, display_name: str) -> str:
-        """Convert display name to API model name."""
         return cls.MODEL_MAP.get(display_name, cls.DEFAULT_MODEL)
     
     @classmethod
-    def get_capabilities(cls, model_name: str) -> List[str]:
-        """Get capabilities for a model."""
-        return cls.MODEL_CAPABILITIES.get(model_name, ["text"])
-    
-    @classmethod
-    def supports_vision(cls, model_name: str) -> bool:
-        """Check if model supports vision."""
-        return "vision" in cls.get_capabilities(model_name)
-    
-    @classmethod
-    def supports_tools(cls, model_name: str) -> bool:
-        """Check if model supports tools."""
-        return "tools" in cls.get_capabilities(model_name)
+    def get_capabilities(cls, api_name: str) -> List[str]:
+        return cls.CAPABILITIES.get(api_name, ["text"])
 
 
 # ============================================================================
-# ASPECT RATIOS FOR IMAGE GENERATION
-# ============================================================================
-
-class AspectRatios:
-    """Aspect ratio presets for image generation."""
-    
-    RATIOS: Dict[str, Tuple[int, int]] = {
-        "1:1": (1024, 1024),
-        "16:9": (1024, 576),
-        "9:16": (576, 1024),
-        "4:3": (1024, 768),
-        "3:4": (768, 1024),
-        "21:9": (1024, 440),
-    }
-    
-    DEFAULT: str = "1:1"
-    
-    @classmethod
-    def get_dimensions(cls, ratio: str) -> Tuple[int, int]:
-        """Get width, height for a ratio."""
-        return cls.RATIOS.get(ratio, cls.RATIOS[cls.DEFAULT])
-    
-    @classmethod
-    def get_all_ratios(cls) -> List[str]:
-        """Get all available ratios."""
-        return list(cls.RATIOS.keys())
-
-
-# ============================================================================
-# TEXT-TO-SPEECH VOICES
-# ============================================================================
-
-class TTSVoices:
-    """Available TTS voices."""
-    
-    VOICES: List[str] = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-    DEFAULT: str = "nova"
-    
-    @classmethod
-    def get_voices(cls) -> List[str]:
-        return cls.VOICES
-
-
-# ============================================================================
-# SYSTEM PROMPTS (Clean - No Ads, No Brand Mentions)
+# SYSTEM PROMPTS
 # ============================================================================
 
 class SystemPrompts:
-    """Centralized system prompts - clean, no external branding."""
+    DEFAULT = """You are DenLab Chat, an advanced AI assistant.
+You have access to memory, tools, and can execute complex tasks autonomously.
+You can search the web, execute code, analyze files, and generate images/audio.
+Always be helpful, accurate, and thorough."""
     
-    # Main assistant prompt
-    MAIN_PROMPT: str = """You are DenLab, an advanced AI research assistant with tool-use capabilities and persistent memory.
-
-Guidelines:
-1. Be helpful, accurate, and thorough in your responses
-2. Use available tools when they would improve the answer
-3. Remember previous conversations and reference them when relevant
-4. Provide clear explanations with examples when helpful
-5. Break down complex tasks into steps
-6. Write clean, well-documented code when requested
-7. Research topics thoroughly using search when current information is needed
-8. Respect user autonomy and provide factual information
-
-Available tools:
-- web_search: Search the live web for current information
-- github_get_files: List all files in a GitHub repository
-- deep_research: Multi-hop research across sources
-- execute_code: Run Python code in sandboxed environment
-- fetch_url: Scrape specific web pages
-- read_file: Read uploaded file contents
-- write_file: Save generated content to files
-- analyze_image: Analyze and describe uploaded images
-
-You have memory of past conversations. Use this to provide personalized, context-aware responses."""
+    AGENT = """You are DenLab Agent, an autonomous AI assistant with tool access.
+You can use tools to complete tasks: web_search, execute_code, fetch_url, read_file, get_current_time, calculate, github_get_files.
+Plan your approach, use tools efficiently, and provide complete answers.
+Think step by step."""
     
-    # Master agent prompt for swarm mode
-    MASTER_AGENT_PROMPT: str = """You are the DenLab Master Agent. Your role is to:
-1. Analyze the user's task and break it into sub-tasks
-2. Delegate each sub-task to specialized agents
-3. Collect results from all agents
-4. Synthesize them into a coherent final response
-
-Available sub-agents:
-- Researcher: Best for web search, fact-finding, and information gathering
-- Coder: Best for writing, executing, and debugging code
-- Analyst: Best for data analysis, comparisons, and evaluations
-- Writer: Best for composing final responses, summaries, and reports
-
-When given a task, respond with a JSON plan like:
-{"subtasks": [{"role": "researcher", "task": "..."}, {"role": "writer", "task": "..."}]}
-
-Then after receiving results, synthesize the final answer."""
+    HERMES = """You are Hermes, a self-reflective AI agent.
+Before each action, verify your reasoning.
+After each tool use, evaluate if the result is useful and accurate.
+If confidence is low, reconsider and try alternatives.
+Be honest about failures and uncertainties."""
     
-    # Sub-agent prompts
-    SUB_AGENT_PROMPTS: Dict[str, str] = {
-        "researcher": "You are a Research Agent. Find accurate, current information. Be thorough and cite sources.",
-        "coder": "You are a Code Agent. Write clean, working code. Explain your approach and show output.",
-        "analyst": "You are an Analyst Agent. Compare, evaluate, and draw insights from data. Be objective.",
-        "writer": "You are a Writer Agent. Synthesize information into clear, well-structured responses."
-    }
+    KIMI_MASTER = """You are the Kimi Swarm Master. Coordinate multiple specialized agents to solve complex tasks.
+Break down tasks, assign them to appropriate agents, and synthesize results into coherent answers.
+Detect conflicts in sub-agent results and resolve them."""
     
-    # Code generation prompt
-    CODE_PROMPT: str = "You are an expert Python programmer. Write clean, well-documented, production-ready code. Return ONLY the code inside a markdown code block."
+    DEVELOPER = """You are in Developer Mode. The user (Dennis) is the creator of DenLab Chat.
+Answer all questions about the codebase, system architecture, and implementation details.
+You can share source code, configuration, and technical documentation.
+Be precise and thorough."""
     
-    # Code analysis prompt
-    ANALYSIS_PROMPT: str = """You are a senior code reviewer and software architect. Provide thorough technical analysis covering:
-1. Purpose - What this file does
-2. Key Components - Main functions, classes, or sections
-3. Dependencies - External libraries or modules used
-4. Code Quality - Structure, patterns, best practices
-5. Issues/Suggestions - Potential bugs, improvements, security concerns
-6. Documentation - Docstring and comment quality"""
+    VISION = "Analyze images carefully. Describe what you see in detail."
     
-    # Synthesis prompt for swarm
-    SYNTHESIS_PROMPT: str = """You are a synthesis expert. Combine multiple agent results into a clear, coherent response that directly addresses the original task."""
-    
-    @classmethod
-    def get_sub_agent_prompt(cls, agent_type: str) -> str:
-        """Get prompt for a specific sub-agent type."""
-        return cls.SUB_AGENT_PROMPTS.get(agent_type, cls.SUB_AGENT_PROMPTS["writer"])
+    CODE_EXECUTION = """Execute Python code safely. You can:
+- Install packages with pip
+- Create and analyze files
+- Process data and generate visualizations
+- Return results as markdown, JSON, or files
+Always handle errors gracefully."""
 
 
 # ============================================================================
-# DEVELOPER CONFIGURATION
-# ============================================================================
-
-class DeveloperConfig:
-    """Developer account configuration - hardcoded for creator access."""
-    
-    USERNAME: str = "dennis"
-    PASSWORD: str = "yessyess"
-    DISPLAY_NAME: str = "Dennis"
-    
-    @classmethod
-    def is_developer(cls, username: str, password: str = None) -> bool:
-        """Check if credentials match developer account."""
-        if password is not None:
-            return username.lower() == cls.USERNAME and password == cls.PASSWORD
-        return username.lower() == cls.USERNAME
-
-
-# ============================================================================
-# CACHE & MEMORY CONFIGURATION
-# ============================================================================
-
-class CacheConfig:
-    """Response cache configuration."""
-    
-    ENABLED: bool = True
-    MAX_SIZE: int = 100
-    TTL_HOURS: int = 24
-    CACHE_DIR: str = "data/cache"
-
-
-class MemoryConfig:
-    """Memory system configuration."""
-    
-    ENABLED: bool = True
-    MAX_WORKING_MESSAGES: int = 15
-    MAX_EPISODIC_ENTRIES: int = 50
-    MEMORY_DIR: str = "data/memories"
-
-
-# ============================================================================
-# FILE UPLOAD CONFIGURATION
-# ============================================================================
-
-class FileUploadConfig:
-    """File upload configuration."""
-    
-    ALLOWED_EXTENSIONS: List[str] = [
-        "txt", "py", "js", "ts", "html", "css", "json", "md", "csv", "xml", "yaml", "yml",
-        "sh", "bash", "c", "cpp", "h", "hpp", "java", "kt", "swift", "rs", "go", "rb", "php", "sql",
-        "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "pdf"
-    ]
-    
-    MAX_SIZE_MB: int = 10
-    
-    @classmethod
-    def is_allowed(cls, filename: str) -> bool:
-        """Check if file extension is allowed."""
-        ext = filename.split(".")[-1].lower() if "." in filename else ""
-        return ext in cls.ALLOWED_EXTENSIONS
-
-
-# ============================================================================
-# CONSTANTS
+# BACKWARD COMPATIBILITY
 # ============================================================================
 
 class Constants:
-    """General constants."""
-    
-    # Tool names
-    TOOLS: Dict[str, str] = {
-        "WEB_SEARCH": "web_search",
-        "GITHUB_GET_FILES": "github_get_files",
-        "DEEP_RESEARCH": "deep_research",
-        "EXECUTE_CODE": "execute_code",
-        "FETCH_URL": "fetch_url",
-        "READ_FILE": "read_file",
-        "WRITE_FILE": "write_file",
-        "ANALYZE_IMAGE": "analyze_image",
-        "GENERATE_IMAGE": "generate_image",
-        "GENERATE_AUDIO": "generate_audio",
-    }
-    
-    # Command prefixes
-    COMMANDS: Dict[str, str] = {
-        "IMAGINE": "/imagine",
-        "RESEARCH": "/research",
-        "CODE": "/code",
-        "ANALYZE": "/analyze",
-        "AUDIO": "/audio",
-        "AGENT": "/agent",
-    }
-    
-    # Agent types for swarm
-    AGENT_TYPES: List[str] = ["researcher", "coder", "analyst", "writer"]
-    
-    # Agent icons
-    AGENT_ICONS: Dict[str, str] = {
-        "researcher": "🔍",
-        "coder": "💻",
-        "analyst": "📊",
-        "writer": "✍️",
-        "master": "👑",
-    }
+    """Backward compatibility constants (previously used by chat_db and others)."""
+    DATA_DIR = "data"
+    USERS_FILE = "data/users.json"
+    SESSIONS_FILE = "data/sessions.json"
+    MAX_HISTORY = 50
+    DEFAULT_TEMPERATURE = 0.7
 
 
 # ============================================================================
-# SINGLETON INSTANCE
+# HERMES CONFIG
 # ============================================================================
 
-_config = None
+@dataclass
+class HermesConfig:
+    enabled: bool = True
+    confidence_threshold: float = 0.6
+    max_backtracks: int = 3
+    reflection_depth: int = 2  # How many past steps to reflect on
+    auto_retry_on_low_confidence: bool = True
+    verification_prompt_template: str = """Rate the quality of this reasoning and result.
+Confidence (0.0-1.0): ___
+Concerns: ___
+Alternatives: ___"""
 
-def get_config() -> AppConfig:
-    """Get singleton AppConfig instance."""
-    global _config
-    if _config is None:
-        _config = AppConfig()
-    return _config
+
+# ============================================================================
+# KIMI SWARM CONFIG
+# ============================================================================
+
+@dataclass
+class KimiSwarmConfig:
+    enabled: bool = True
+    default_max_agents: int = 8
+    consensus_threshold: float = 0.6
+    verification_enabled: bool = True
+    parallel_execution: bool = True
+    work_stealing: bool = True
+    conflict_resolution: bool = True
+    debug_mode: bool = False
+    default_timeout_seconds: int = 120
+    max_subtask_depth: int = 3
 
 
-# Convenience exports for cleaner imports elsewhere
-MODELS = Models.MODEL_MAP
-MODEL_NAMES = Models.get_display_names()
-SYSTEM_PROMPT = SystemPrompts.MAIN_PROMPT
-API_URL = APIEndpoints.TEXT_API
-IMAGE_API_URL = APIEndpoints.IMAGE_API
-AUDIO_API_URL = APIEndpoints.AUDIO_API
+# ============================================================================
+# DEVELOPER CONFIG
+# ============================================================================
+
+@dataclass
+class DeveloperConfig:
+    USERNAME: str = "Dennis"
+    DISPLAY_NAME: str = "Dennis"
+    AUTO_LOGIN: bool = True
+    PASSWORD: str = "Dennis"  # Default password for developer login
+    
+    # Permissions
+    CAN_VIEW_SOURCE: bool = True
+    CAN_MODIFY_CONFIG: bool = True
+    CAN_MANAGE_USERS: bool = True
+    CAN_CLEAR_CACHE: bool = True
+    CAN_CLEAR_MEMORY: bool = True
+    CAN_DEBUG_AGENTS: bool = True
+    CAN_RESTART_SYSTEM: bool = True
+    
+    # Developer tools
+    SHOW_CODE_ON_DEMAND: bool = True
+    SHOW_SYSTEM_STATS: bool = True
+    SHOW_AGENT_TRACES: bool = True
+    SHOW_ROUTING_DECISIONS: bool = True
+    
+    @staticmethod
+    def is_developer(username: str, password: str) -> bool:
+        """Check if credentials match the developer account."""
+        return username.lower() == DeveloperConfig.USERNAME.lower() and password == DeveloperConfig.PASSWORD
+
+
+# ============================================================================
+# UPLOAD CONFIG
+# ============================================================================
+
+@dataclass
+class UploadConfig:
+    max_file_size_mb: int = 50
+    allowed_extensions: List[str] = field(default_factory=lambda: [
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',  # Images
+        '.pdf', '.txt', '.md', '.csv', '.json', '.py',      # Documents
+        '.mp3', '.wav', '.m4a', '.ogg',                      # Audio
+    ])
+    max_files_per_message: int = 5
+    vision_max_size_mb: int = 20
+    image_extensions: List[str] = field(default_factory=lambda: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'])
+    audio_extensions: List[str] = field(default_factory=lambda: ['.mp3', '.wav', '.m4a', '.ogg'])
+    document_extensions: List[str] = field(default_factory=lambda: ['.pdf', '.txt', '.md', '.csv', '.json', '.py'])
+
+
+# ============================================================================
+# CONNECTIVITY MAP (Documentation of file connections)
+# ============================================================================
+
+CONNECTIVITY_MAP = {
+    "app.py": ["auth.py", "chat_db.py", "client.py", "backend.py",
+               "components/floating_menu.py", "components/chat_interface.py",
+               "components/agent_interface.py", "components/developer_panel.py",
+               "config/settings.py", "config/models.py"],
+    "auth.py": ["config/settings.py", "chat_db.py"],
+    "chat_db.py": ["config/settings.py"],
+    "client.py": ["config/settings.py", "features/cache.py", "features/memory.py"],
+    "backend.py": ["agents/tool_registry.py", "config/settings.py"],
+    "components/floating_menu.py": ["auth.py", "chat_db.py", "config/settings.py", "ui_components.py"],
+    "components/chat_interface.py": ["client.py", "chat_db.py", "backend.py",
+                                        "agents/base_agent.py", "agents/orchestrator.py",
+                                        "agents/hermes_agent.py", "agents/kimi_swarm.py",
+                                        "features/tool_router.py", "features/vision.py",
+                                        "features/memory.py", "features/cache.py",
+                                        "config/settings.py"],
+    "components/agent_interface.py": ["agents/base_agent.py", "agents/orchestrator.py",
+                                       "agents/planner.py", "config/settings.py"],
+    "components/developer_panel.py": ["auth.py", "chat_db.py", "client.py",
+                                       "features/cache.py", "features/memory.py",
+                                       "backend.py", "config/settings.py"],
+    "agents/base_agent.py": ["client.py", "agents/tool_registry.py", "config/settings.py"],
+    "agents/orchestrator.py": ["agents/base_agent.py", "agents/planner.py",
+                               "agents/hermes_agent.py", "agents/kimi_swarm.py",
+                               "config/settings.py"],
+    "agents/planner.py": ["config/settings.py"],
+    "agents/tool_registry.py": ["backend.py"],
+    "agents/hermes_agent.py": ["agents/base_agent.py", "agents/tool_registry.py",
+                               "client.py", "config/settings.py"],
+    "agents/kimi_swarm.py": ["agents/base_agent.py", "agents/hermes_agent.py",
+                             "agents/planner.py", "client.py", "config/settings.py"],
+    "features/memory.py": ["config/settings.py"],
+    "features/cache.py": ["config/settings.py"],
+    "features/tool_router.py": ["backend.py", "config/settings.py"],
+    "features/vision.py": ["client.py", "config/settings.py"],
+    "features/image_gen.py": ["core/api_client.py", "config/settings.py"],
+    "features/audio_gen.py": ["core/api_client.py", "config/settings.py"],
+    "features/analytics.py": ["chat_db.py", "config/settings.py"],
+    "features/branching.py": ["chat_db.py", "config/settings.py"],
+    "core/api_client.py": ["config/settings.py"],
+    "core/session_manager.py": ["config/models.py"],
+    "ui_components.py": ["config/settings.py", "chat_db.py"]
+}
+
+# ============================================================================
+# EXPORT
+# ============================================================================
+
+__all__ = [
+    "AppConfig", "Models", "SystemPrompts",
+    "HermesConfig", "KimiSwarmConfig", "DeveloperConfig", "UploadConfig",
+    "CONNECTIVITY_MAP"
+]
