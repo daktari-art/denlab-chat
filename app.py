@@ -163,7 +163,7 @@ if not st.session_state.current_user and not st.session_state.user_token:
         dev_user = auth_manager.login("Dennis", "Dennis")
         if dev_user:
             st.session_state.user_token = dev_user["token"]
-            st.session_state.current_user = dev_user
+            st.session_state.current_user = dev_user["user"]
             st.session_state.is_developer = True
             st.session_state.show_auth = False
             st.rerun()
@@ -301,7 +301,7 @@ def render_auth():
             user = auth_manager.login(username, password)
             if user:
                 st.session_state.user_token = user["token"]
-                st.session_state.current_user = user
+                st.session_state.current_user = user["user"]
                 st.session_state.is_developer = auth_manager.is_developer(username)
                 st.session_state.show_auth = False
                 st.rerun()
@@ -322,7 +322,7 @@ def render_auth():
                 if auth_manager.register(new_username, new_password):
                     user = auth_manager.login(new_username, new_password)
                     st.session_state.user_token = user["token"]
-                    st.session_state.current_user = user
+                    st.session_state.current_user = user["user"]
                     st.session_state.show_auth = False
                     st.rerun()
                 else:
