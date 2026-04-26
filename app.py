@@ -302,7 +302,7 @@ def render_auth():
             if user:
                 st.session_state.user_token = user["token"]
                 st.session_state.current_user = user["user"]
-                st.session_state.is_developer = auth_manager.is_developer(username)
+                st.session_state.is_developer = (username.lower() == DeveloperConfig.USERNAME.lower())
                 st.session_state.show_auth = False
                 st.rerun()
             else:
