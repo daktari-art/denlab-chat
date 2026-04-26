@@ -446,3 +446,13 @@ def get_swarm_config() -> Dict[str, Any]:
         "show_plan": st.session_state.get("swarm_show_plan", True),
         "debug_mode": st.session_state.get("swarm_debug_mode", False)
     }
+
+# ============================================================================
+# BACKWARD COMPATIBILITY FUNCTION
+# ============================================================================
+
+def render_agent_interface():
+    """Placeholder agent interface for backward compatibility."""
+    import streamlit as st
+    st.markdown("### 🤖 Agent Interface")
+    st.info("Agent mode is active. The chat will use tools autonomously.")
