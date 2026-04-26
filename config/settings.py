@@ -53,10 +53,14 @@ class AppConfig:
 # ============================================================================
 
 class Models:
-    DEFAULT_MODEL = "openai"
-    
     PROVIDERS: Dict[str, Dict] = {
-        "openai": {
+    "pollinations": {
+            "display_name": "Pollinations.ai (Free)",
+            "api_url": "https://text.pollinations.ai/openai",
+            "env_var": "",  # No API key needed
+            "models": ["openai", "openai-large"]
+    },
+    "openai": {
             "display_name": "OpenAI",
             "api_url": "https://api.openai.com/v1",
             "env_var": "OPENAI_API_KEY",
@@ -95,6 +99,8 @@ class Models:
     }
     
     MODEL_MAP = {
+        "Pollinations (Free)": "pollinations",
+        "Pollinations GPT-4o": "pollinations",
         "OpenAI GPT-4o": "openai",
         "OpenAI GPT-4o Mini": "openai",
         "OpenAI o1-preview": "openai",
@@ -114,6 +120,7 @@ class Models:
     }
     
     CAPABILITIES = {
+        "pollinations": ["text", "images", "agent", "swarm"],
         "openai": ["text", "images", "agent", "swarm", "vision"],
         "google": ["text", "images", "vision", "agent"],
         "mistral": ["text", "agent"],
