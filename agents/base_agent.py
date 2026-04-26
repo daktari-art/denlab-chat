@@ -1,5 +1,5 @@
 """
-Base Agent with proper final response generation.
+Base Agent with proper final response and Pollinations retry support.
 """
 
 import json
@@ -24,7 +24,6 @@ class AgentState(Enum):
     EXECUTING = "executing"
     COMPLETE = "complete"
     ERROR = "error"
-    PAUSED = "paused"
 
 
 @dataclass
@@ -38,10 +37,16 @@ class ToolCall:
     
     @classmethod
     def from_openai_format(cls, data: Dict) -> "ToolCall":
+        func_data = data.get("function", {})
+        args_str = func_data.get("arguments", "{}")
+        try:
+            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+        except json.JSONDecodeError:
+            args = {}
         return cls(
             id=data.get("id", ""),
-            name=data.get("function", {}).get("name", ""),
-            arguments=json.loads(data.get("function", {}).get("arguments", "{}")),
+            name=func_data.get("name", ""),
+            arguments=args,
         )
     
     def to_openai_format(self) -> Dict:
@@ -64,10 +69,10 @@ class AgentTrace:
 
 
 class BaseAgent:
-    """Base agent with proper final response generation."""
+    """Base agent with guaranteed response output."""
     
     def __init__(self, name: str = "BaseAgent", model: str = "openai", max_steps: int = None,
-                 system_prompt: str = None, timeout_seconds: int = 60):
+                 system_prompt: str = None, timeout_seconds: int = 90):
         self.name = name
         self.model = model
         self.max_steps = max_steps or AppConfig.max_agent_steps
@@ -80,62 +85,61 @@ class BaseAgent:
         self._tool_registry = get_tool_registry()
         self.on_step: Optional[Callable] = None
         self.on_tool_call: Optional[Callable] = None
-        self.on_complete: Optional[Callable] = None
     
     def _get_client(self):
         if self._client is None:
             self._client = get_client()
         return self._client
     
-    async def _llm_call(self, messages: List[Dict], tools: List[Dict] = None,
-                        user_id: Optional[str] = None) -> Dict:
-        """Call LLM with timeout."""
-        try:
-            response = await asyncio.wait_for(
-                self._async_generate(messages, tools, user_id),
-                timeout=self.timeout_seconds
-            )
-            return response
-        except asyncio.TimeoutError:
-            return {"content": "Timed out. Please try a simpler request.", "tool_calls": []}
-    
-    async def _async_generate(self, messages: List[Dict], tools: List[Dict] = None,
-                              user_id: Optional[str] = None) -> Dict:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._get_client().generate(
-                messages=messages, model=self.model, temperature=0.7,
-                tools=tools, user_id=user_id
-            )
-        )
+    def _generate_with_retry(self, messages: List[Dict], tools: List[Dict] = None, 
+                             user_id: str = None, max_retries: int = 3) -> Dict:
+        """Generate with retry for Pollinations 502 errors."""
+        for attempt in range(max_retries):
+            try:
+                response = self._get_client().generate(
+                    messages=messages, model=self.model, temperature=0.7,
+                    tools=tools, user_id=user_id
+                )
+                if response.get("content") or response.get("tool_calls"):
+                    return response
+                if attempt < max_retries - 1:
+                    time.sleep(1.5 * (attempt + 1))
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return {"content": f"Error after {max_retries} attempts: {str(e)}", "tool_calls": None}
+        
+        return {"content": "Unable to generate response. Please try again.", "tool_calls": None}
     
     def _build_system_prompt(self) -> str:
         base = self.system_prompt
-        if self._tool_registry and self._tool_registry.get_tools_count() > 0:
-            base += "\n\nAvailable tools:\n"
-            metadata = self._tool_registry.get_tools_metadata()
-            for name, info in metadata.items():
-                base += f"- {name}: {info.get('description', 'No description')}\n"
-        base += f"\nMaximum steps: {self.max_steps}. Provide complete answers."
+        tools_meta = self._tool_registry.get_tools_metadata()
+        if tools_meta:
+            base += "\n\nYou have access to these tools:\n"
+            for name, info in tools_meta.items():
+                base += f"- **{name}**: {info.get('description', 'No description')}\n"
+            base += "\nUse tools when they would help. Always provide complete, detailed answers."
         return base
     
     async def run(self, task: str, context: Optional[str] = None,
                   user_id: Optional[str] = None) -> str:
-        """Execute the agent loop with guaranteed final response."""
+        """Execute agent loop with guaranteed final output."""
         self.state = AgentState.PLANNING
         self.step_count = 0
         self.traces = []
         
-        user_prompt = f"Task: {task}\n"
+        user_prompt = f"## Task\n{task}\n"
         if context:
-            user_prompt += f"\nContext:\n{context}\n"
-        user_prompt += "\nWork step by step. Use tools when helpful. Always provide a complete final answer."
+            user_prompt += f"\n## Context\n{context}\n"
+        user_prompt += "\nWork through this step by step. Use tools if helpful. Always finish with a complete answer."
         
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": user_prompt}
         ]
+        
+        last_content = ""
         
         try:
             while self.step_count < self.max_steps:
@@ -143,87 +147,79 @@ class BaseAgent:
                 self.state = AgentState.EXECUTING
                 
                 tools = self._tool_registry.get_tool_schema() if self._tool_registry.get_tools_count() > 0 else None
-                response = await self._llm_call(messages, tools=tools, user_id=user_id)
+                response = self._generate_with_retry(messages, tools=tools, user_id=user_id)
                 
                 content = response.get("content") or ""
                 tool_calls_raw = response.get("tool_calls") or []
                 
-                # If no tool calls, generate final answer
+                if content:
+                    last_content = content
+                
+                # No tool calls = final answer
                 if not tool_calls_raw:
                     self.state = AgentState.COMPLETE
-                    
-                    # If content is empty, make one more call for a proper response
-                    if not content or len(content) < 20:
-                        messages.append({"role": "user", "content": "Please provide your complete final answer to the original task."})
-                        final_resp = await self._llm_call(messages, tools=None, user_id=user_id)
-                        content = final_resp.get("content") or "Task completed."
-                    
-                    self.traces.append(AgentTrace(step=self.step_count, thought=content[:200], tool_calls=[]))
-                    return content
+                    final = content if content and len(content) > 20 else last_content
+                    if not final or len(final) < 10:
+                        # Force final answer
+                        messages.append({"role": "user", "content": "Please provide your complete final answer to the task."})
+                        forced = self._generate_with_retry(messages, tools=None, user_id=user_id)
+                        final = forced.get("content", "Task completed.")
+                    self.traces.append(AgentTrace(step=self.step_count, thought=final[:200]))
+                    return final
                 
                 # Process tool calls
-                trace = AgentTrace(step=self.step_count, thought=content[:500] if content else f"Using {len(tool_calls_raw)} tool(s)...")
+                trace = AgentTrace(step=self.step_count, 
+                                 thought=content[:300] if content else f"Using {len(tool_calls_raw)} tool(s)")
                 
-                tool_calls = []
                 for tc_raw in tool_calls_raw:
                     tc = ToolCall.from_openai_format(tc_raw)
                     
                     if self.on_tool_call:
                         self.on_tool_call(tc)
                     
-                    start_time = time.time()
                     try:
                         result = self._tool_registry.execute(tc.name, **tc.arguments)
-                        tc.result = result
+                        tc.result = str(result)[:4000]
                         tc.status = "success"
                     except Exception as e:
                         tc.result = f"Error: {str(e)}"
                         tc.status = "error"
                     
-                    tc.duration_ms = (time.time() - start_time) * 1000
-                    tool_calls.append(tc)
-                    
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": str(tc.result)[:4000]
-                    })
+                    trace.tool_calls.append(tc)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": tc.result})
                 
-                trace.tool_calls = tool_calls
                 self.traces.append(trace)
-                
                 if self.on_step:
                     self.on_step(trace)
                 
+                # Add assistant message with tool calls
                 messages.append({
                     "role": "assistant",
                     "content": content or "Using tools...",
-                    "tool_calls": [tc.to_openai_format() for tc in tool_calls]
+                    "tool_calls": [tc.to_openai_format() for tc in trace.tool_calls]
                 })
                 
-                # Get follow-up after tool use
-                follow_up = await self._llm_call(messages, user_id=user_id)
-                follow_content = follow_up.get("content") or ""
+                # Get follow-up after tools
+                follow = self._generate_with_retry(messages, user_id=user_id)
+                follow_content = follow.get("content") or ""
                 
-                if follow_content and len(follow_content) > 50:
+                if follow_content:
                     messages.append({"role": "assistant", "content": follow_content})
+                    last_content = follow_content
                     
-                    # Check if this is a final answer
-                    if len(follow_content) > 100 or any(word in follow_content.lower() for word in 
-                          ["final", "answer", "result", "conclusion", "summary", "completed"]):
+                    # Check if final
+                    if len(follow_content) > 100:
                         self.state = AgentState.COMPLETE
-                        self.traces.append(AgentTrace(step=self.step_count + 0.5, thought=follow_content[:200], tool_calls=[]))
+                        self.traces.append(AgentTrace(step=self.step_count + 0.5, thought=follow_content[:200]))
                         return follow_content
             
-            # Max steps reached - force final answer
-            self.state = AgentState.ERROR
-            messages.append({"role": "user", "content": "You've reached the maximum steps. Provide your best answer now based on what you've found."})
-            final_resp = await self._llm_call(messages, tools=None, user_id=user_id)
-            return final_resp.get("content", "Maximum steps reached. Could not complete the task.")
+            # Max steps - synthesize final
+            messages.append({"role": "user", "content": "You've reached the maximum steps. Provide your best answer based on everything above."})
+            final = self._generate_with_retry(messages, tools=None, user_id=user_id)
+            return final.get("content", last_content or "Task completed after maximum steps.")
             
         except Exception as e:
-            self.state = AgentState.ERROR
-            return f"Agent error: {str(e)}. Please try again with a different approach."
+            return f"Agent error: {str(e)}"
 
 
 def create_simple_agent(model: str = "openai", max_steps: int = None,
