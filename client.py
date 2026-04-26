@@ -1,22 +1,13 @@
 """
-Multi-Provider LLM Client with Enhanced Fallback and Streaming Support.
-
-ADVANCEMENTS:
-1. Fallback chain: If primary provider fails, automatically tries backup providers
-2. Streaming support: Real-time token streaming for chat responses
-3. Better error handling: Categorizes errors (rate limit, auth, timeout, etc.)
-4. Provider health tracking: Avoids repeatedly failing providers
-5. Request batching: Combines small requests when possible
-6. Metrics collection: Tracks latency, tokens, success rate per provider
-
-Connected to: config/settings.py (provider configs), features/cache.py (response cache),
-features/memory.py (memory storage).
+Multi-Provider LLM Client with Pollinations.ai as Default Free Provider.
+Uses Pollinations.ai (no API key required) as primary, with optional paid fallbacks.
 """
 
 import streamlit as st
 import json
 import hashlib
 import time
+import requests
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
 
@@ -57,15 +48,17 @@ class ProviderMetrics:
 
 
 # ============================================================================
-# MULTI-PROVIDER CLIENT
+# MULTI-PROVIDER CLIENT (Pollinations.ai as Primary)
 # ============================================================================
 
 class MultiProviderClient:
     """
-    Enhanced client with fallback chain, health tracking, and metrics.
+    LLM client with Pollinations.ai as the free default provider.
+    Falls back to paid providers only if API keys are configured.
     """
     
-    FALLBACK_CHAIN = ["openai", "google", "mistral", "anthropic", "cohere", "meta"]
+    # Pollinations is always first since it's free and requires no API key
+    FALLBACK_CHAIN = ["pollinations", "openai", "google", "mistral", "anthropic", "cohere", "meta"]
     
     def __init__(self):
         self.api_keys: Dict[str, str] = {}
@@ -74,7 +67,7 @@ class MultiProviderClient:
         self._memory = None
         self.metrics: Dict[str, ProviderMetrics] = {
             name: ProviderMetrics()
-            for name in Models.PROVIDERS.keys()
+            for name in self.FALLBACK_CHAIN
         }
     
     def _load_api_keys(self):
@@ -97,6 +90,8 @@ class MultiProviderClient:
     
     def _update_metrics(self, provider: str, success: bool, latency_ms: float, error: str = ""):
         """Update provider metrics."""
+        if provider not in self.metrics:
+            self.metrics[provider] = ProviderMetrics()
         m = self.metrics[provider]
         m.total_requests += 1
         if success:
@@ -104,19 +99,33 @@ class MultiProviderClient:
         else:
             m.failed_requests += 1
             m.last_error = error
-            if m.failed_requests > 3 and m.failed_requests / m.total_requests > 0.7:
+            if m.failed_requests > 3 and m.total_requests > 0 and m.failed_requests / m.total_requests > 0.7:
                 m.is_healthy = False
-        
-        # Update rolling average latency
-        m.avg_latency_ms = (m.avg_latency_ms * (m.total_requests - 1) + latency_ms) / m.total_requests
+        m.avg_latency_ms = (m.avg_latency_ms * (m.total_requests - 1) + latency_ms) / max(m.total_requests, 1)
         m.last_used = time.time()
     
     def _get_fallback_chain(self, primary: str) -> List[str]:
-        """Get ordered fallback providers."""
-        chain = [primary]
+        """Get ordered fallback providers. Pollinations is always available."""
+        chain = []
+        
+        # Always try Pollinations first if no API keys are set
+        if primary == "pollinations" or not self.api_keys:
+            chain.append("pollinations")
+        
+        # Add the primary if it's not pollinations
+        if primary != "pollinations" and primary in self.api_keys:
+            chain.append(primary)
+        
+        # Add remaining providers that have API keys and are healthy
         for p in self.FALLBACK_CHAIN:
-            if p != primary and p in self.api_keys and self.metrics[p].is_healthy:
-                chain.append(p)
+            if p not in chain and p != "pollinations":
+                if p in self.api_keys:
+                    chain.append(p)
+        
+        # Ensure pollinations is always available as last resort
+        if "pollinations" not in chain:
+            chain.append("pollinations")
+        
         return chain
     
     # ========================================================================
@@ -129,9 +138,14 @@ class MultiProviderClient:
                  stream_callback: Callable = None) -> Dict:
         """
         Generate response with caching, fallback, and optional streaming.
+        Uses Pollinations.ai as the free default.
         """
         model = model or Models.DEFAULT_MODEL
         api_name, config = self._get_provider_config(model)
+        
+        # If no API keys are set at all, force Pollinations
+        if not self.api_keys:
+            api_name = "pollinations"
         
         # Check cache
         if self._cache and st.session_state.get("cache_enabled", True):
@@ -189,10 +203,10 @@ class MultiProviderClient:
                        temperature: float, tools: List[Dict] = None,
                        stream: bool = False, stream_callback: Callable = None) -> Dict:
         """Call a specific provider."""
-        config = Models.PROVIDERS.get(provider, {})
-        api_url = config.get("api_url", "")
         
-        if provider == "openai":
+        if provider == "pollinations":
+            return self._call_pollinations(messages, model, temperature, stream, stream_callback)
+        elif provider == "openai":
             return self._call_openai(messages, model, temperature, tools, stream, stream_callback)
         elif provider == "google":
             return self._call_google(messages, model, temperature)
@@ -205,15 +219,82 @@ class MultiProviderClient:
         elif provider == "meta":
             return self._call_together(messages, model, temperature)
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            # Unknown provider - try Pollinations as ultimate fallback
+            return self._call_pollinations(messages, model, temperature, stream, stream_callback)
     
     # ========================================================================
-    # PROVIDER IMPLEMENTATIONS
+    # POLLINATIONS.AI (Free, no API key required)
+    # ========================================================================
+    
+    def _call_pollinations(self, messages, model, temperature, stream=False, stream_callback=None):
+        """Call Pollinations.ai - completely free, no API key needed."""
+        url = "https://text.pollinations.ai/openai"
+        
+        payload = {
+            "model": "openai",
+            "messages": messages,
+            "temperature": temperature,
+            "stream": False
+        }
+        
+        if stream and stream_callback:
+            payload["stream"] = True
+            full_response = ""
+            try:
+                response = requests.post(url, json=payload, stream=True, timeout=120)
+                response.raise_for_status()
+                for line in response.iter_lines(decode_unicode=True):
+                    if line and line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                full_response += content
+                                stream_callback(content)
+                        except json.JSONDecodeError:
+                            continue
+                return {"content": full_response, "model": model, "guardrail_triggered": False}
+            except Exception as e:
+                raise Exception(f"Pollinations.ai error: {str(e)}")
+        
+        # Non-streaming
+        try:
+            response = requests.post(url, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            return {
+                "content": content,
+                "model": model,
+                "guardrail_triggered": False
+            }
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Pollinations.ai request failed: {str(e)}")
+        except (KeyError, IndexError, json.JSONDecodeError) as e:
+            raise Exception(f"Pollinations.ai response parsing failed: {str(e)}")
+    
+    # ========================================================================
+    # OPENAI (Requires API Key)
     # ========================================================================
     
     def _call_openai(self, messages, model, temperature, tools=None, stream=False, stream_callback=None):
-        import openai
-        client = openai.OpenAI(api_key=self.api_keys.get("openai", ""))
+        """Call OpenAI - requires OPENAI_API_KEY."""
+        try:
+            import openai
+        except ImportError:
+            raise Exception("OpenAI package not installed. Run: pip install openai")
+        
+        api_key = self.api_keys.get("openai", "")
+        if not api_key:
+            raise Exception("OpenAI API key not configured. Set OPENAI_API_KEY environment variable.")
+        
+        client = openai.OpenAI(api_key=api_key)
         
         kwargs = {
             "model": "gpt-4o",
@@ -246,9 +327,16 @@ class MultiProviderClient:
         }
     
     def _call_google(self, messages, model, temperature):
-        import google.generativeai as genai
-        genai.configure(api_key=self.api_keys.get("google", ""))
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            raise Exception("Google Generative AI package not installed. Run: pip install google-generativeai")
         
+        api_key = self.api_keys.get("google", "")
+        if not api_key:
+            raise Exception("Google API key not configured.")
+        
+        genai.configure(api_key=api_key)
         gemini = genai.GenerativeModel("gemini-1.5-pro")
         
         contents = []
@@ -263,10 +351,17 @@ class MultiProviderClient:
         return {"content": response.text, "model": model, "guardrail_triggered": False}
     
     def _call_mistral(self, messages, model, temperature):
-        from mistralai.client import MistralClient
-        from mistralai.models.chat_completion import ChatMessage
+        try:
+            from mistralai.client import MistralClient
+            from mistralai.models.chat_completion import ChatMessage
+        except ImportError:
+            raise Exception("Mistral package not installed.")
         
-        client = MistralClient(api_key=self.api_keys.get("mistral", ""))
+        api_key = self.api_keys.get("mistral", "")
+        if not api_key:
+            raise Exception("Mistral API key not configured.")
+        
+        client = MistralClient(api_key=api_key)
         chat_messages = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
         
         response = client.chat(
@@ -277,8 +372,16 @@ class MultiProviderClient:
         return {"content": response.choices[0].message.content, "model": model, "guardrail_triggered": False}
     
     def _call_anthropic(self, messages, model, temperature):
-        import anthropic
-        client = anthropic.Anthropic(api_key=self.api_keys.get("anthropic", ""))
+        try:
+            import anthropic
+        except ImportError:
+            raise Exception("Anthropic package not installed.")
+        
+        api_key = self.api_keys.get("anthropic", "")
+        if not api_key:
+            raise Exception("Anthropic API key not configured.")
+        
+        client = anthropic.Anthropic(api_key=api_key)
         
         system_msg = ""
         other_messages = []
@@ -298,8 +401,16 @@ class MultiProviderClient:
         return {"content": response.content[0].text, "model": model, "guardrail_triggered": False}
     
     def _call_cohere(self, messages, model, temperature):
-        import cohere
-        client = cohere.Client(self.api_keys.get("cohere", ""))
+        try:
+            import cohere
+        except ImportError:
+            raise Exception("Cohere package not installed.")
+        
+        api_key = self.api_keys.get("cohere", "")
+        if not api_key:
+            raise Exception("Cohere API key not configured.")
+        
+        client = cohere.Client(api_key)
         
         chat_history = []
         for m in messages:
@@ -317,9 +428,17 @@ class MultiProviderClient:
         return {"content": response.text, "model": model, "guardrail_triggered": False}
     
     def _call_together(self, messages, model, temperature):
-        import openai
+        try:
+            import openai
+        except ImportError:
+            raise Exception("OpenAI package not installed.")
+        
+        api_key = self.api_keys.get("meta", "")
+        if not api_key:
+            raise Exception("Together API key not configured.")
+        
         client = openai.OpenAI(
-            api_key=self.api_keys.get("meta", ""),
+            api_key=api_key,
             base_url="https://api.together.xyz/v1"
         )
         
@@ -365,8 +484,12 @@ class MultiProviderClient:
         }
     
     def get_available_providers(self) -> List[str]:
-        """Get list of providers with valid API keys."""
-        return [name for name in Models.PROVIDERS.keys() if name in self.api_keys]
+        """Get list of available providers."""
+        available = ["pollinations"]  # Always available
+        for name in Models.PROVIDERS.keys():
+            if name in self.api_keys:
+                available.append(name)
+        return available
 
 
 # ============================================================================
