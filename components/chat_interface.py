@@ -19,13 +19,14 @@ features/memory.py (context), features/cache.py (response cache).
 import streamlit as st
 from typing import List, Dict, Optional, Any
 import os
+import asyncio
 import base64
 import json
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import Models, AppConfig
+from config.settings import Models, AppConfig, SystemPrompts
 from client import get_client
 from backend import get_tools_metadata
 from chat_db import ConversationDB
@@ -145,7 +146,7 @@ class ChatInterface:
             caps = Models.get_capabilities(self.model)
             st.caption(f"✨ {', '.join(caps[:3]) if caps else 'text'}")
         with cols[3]:
-            st.caption(f"📚 {len(self.db.get_conversation_messages(self.conversation_id))} msgs")
+            st.caption(f"📚 {len(self.db.get_messages(self.conversation_id))} msgs")
     
     # ========================================================================
     # Chat History
@@ -153,7 +154,7 @@ class ChatInterface:
     
     def _render_chat_history(self):
         """Render chat messages."""
-        messages = self.db.get_conversation_messages(self.conversation_id)
+        messages = self.db.get_messages(self.conversation_id)
         
         for msg in messages:
             role = msg["role"]
@@ -355,7 +356,7 @@ class ChatInterface:
                 pass
         
         # Add recent history
-        history = self.db.get_conversation_messages(self.conversation_id)
+        history = self.db.get_messages(self.conversation_id)
         for msg in history[-6:]:
             messages.append({"role": msg["role"], "content": msg.get("content", "")})
         
